@@ -1,19 +1,30 @@
-import streamlit as st
-import pandas as pd
-import json
+import os
 import time
+import json
+import pandas as pd
+import streamlit as st
 
-from selenium import webdriver 
-from selenium.common.exceptions import NoSuchElementException
+from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
-URL_START = "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm&state=rO0ABXQA701GcmNEbDZPZ28xODJOWWQ4aTNPT2krWUcrM0pTODAzTEJHTmtLRE1IT2pBQ2l2eW84em5lWjByM3RGY1BLT0tyQjEvdTBRaHNNUW8KWDJRQ0h3WmZJQWZyV0JBaGtTT0hWajVMZEg0Mm5ZdHlrQlFVaDFwMzF1eVl1V2tLS3ozUnVoZ1ovZisrQkZndGdSVzg1TXdRTmRhbAp1ek5OaXdFbG80TkNSK0E2NjZHeG0zNkNaM0NZL0RXa1FZOGNJOWZsYjB5ZXc3MVNaTUpxWURmNGF3dVlDK3pMUHdveHI2cnNIaWc1CkI3SkxDSnc9"
-
+# -------------------------
+# Constantes de la app
+# -------------------------
+URL_START = (
+    "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/"
+    "oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&"
+    "originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm&"
+    "state=rO0ABXQA701GcmNEbDZPZ28xODJOWWQ4aTNPT2krWUcrM0pTODAzTEJHTmtLRE1IT2pBQ2l2eW84em5l"
+    "WjByM3RGY1BLT0tyQjEvdTBRaHNNUW8KWDJRQ0h3WmZJQWZyV0JBaGtTT0hWajVMZEg0Mm5ZdHlrQlFVaDFw"
+    "MzF1eVl1V2tLS3ozUnVoZ1ovZisrQkZndGdSVzg1TXdRTmRhbHV6Tk5pd0VsbzROQ1IrQTY2Nkd4bTM2Q1oz"
+    "Q1kvRFdrUVk4Y0k5ZmxiMHllezcxU1pNSnFZRGY0YXd1WUMrekxQd295cjZyc0hpZzVCN0pMQ0p3PQ=="
+)
 
 XPATHS = {
     "ruc": '//*[@id="txtRuc"]',
@@ -25,33 +36,74 @@ XPATHS = {
     "btn_declaraciones3": '//*[@id="nivel4_55_2_1_1_1"]',
 }
 
-def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: str, headless: bool = True):
+# -------------------------
+# Utilidades Selenium
+# -------------------------
+def build_driver(headless: bool = True):
+    """
+    Crea un driver de Chrome/Chromium que funciona:
+      - En Streamlit Cloud: usa /usr/bin/chromium y /usr/bin/chromedriver (instalados con packages.txt)
+      - En local: usa webdriver-manager para descargar un driver compatible
+    """
     chrome_options = Options()
     if headless:
         chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1680,1280")
-    chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-notifications")
     chrome_options.add_argument("--disable-popup-blocking")
-    chrome_options.add_argument("--disable-infobars")
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
+    chrome_options.add_experimental_option("useAutomationExtension", False)
     chrome_options.add_argument(
-        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0 Safari/537.36"
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
     )
 
-    service = Service(ChromeDriverManager().install())
+    # Intento 1: binarios del contenedor (Streamlit Cloud)
+    chromium_bin = os.environ.get("GOOGLE_CHROME_BIN") or "/usr/bin/chromium"
+    chromedriver_bin = os.environ.get("CHROMEDRIVER_PATH") or "/usr/bin/chromedriver"
+
+    if os.path.exists(chromium_bin) and os.path.exists(chromedriver_bin):
+        chrome_options.binary_location = chromium_bin
+        service = Service(chromedriver_bin)
+    else:
+        # Intento 2: entorno local con webdriver-manager
+        service = Service(ChromeDriverManager().install())
+
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    # Ocultar webdriver (algunas protecciones básicas)
-    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": "Object.defineProperty(navigator, 'webdriver', { get: () => undefined })"
-    })
+    # Ocultar webdriver (best-effort)
+    try:
+        driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+            "source": "Object.defineProperty(navigator, 'webdriver', { get: () => undefined })"
+        })
+    except Exception:
+        pass
 
-    wait = WebDriverWait(driver, 15)
+    return driver
+
+def save_artifacts(driver, prefix="sunat_error"):
+    """Guarda screenshot y HTML de la página actual para diagnóstico."""
+    outdir = os.path.abspath(".")
+    png = os.path.join(outdir, f"{prefix}.png")
+    html = os.path.join(outdir, f"{prefix}.html")
+    try:
+        driver.save_screenshot(png)
+    except Exception:
+        pass
+    try:
+        with open(html, "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
+    except Exception:
+        pass
+    return png, html
+
+def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: str, headless: bool = True):
+    driver = build_driver(headless=headless)
+    wait = WebDriverWait(driver, 25)
+
     try:
         driver.get(URL_START)
 
@@ -60,33 +112,27 @@ def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: s
         driver.find_element(By.XPATH, XPATHS["usuario"]).send_keys(usr)
         driver.find_element(By.XPATH, XPATHS["clave"]).send_keys(psw)
         driver.find_element(By.XPATH, XPATHS["btn_ingresar"]).click()
-        time.sleep(1)
+        time.sleep(1.5)
 
         # Navegación “Mis declaraciones”
-        driver.find_element(By.XPATH, XPATHS["btn_declaraciones1"]).click()
-        time.sleep(1)
-        driver.find_element(By.XPATH, XPATHS["btn_declaraciones2"]).click()
-        time.sleep(1)
-        driver.find_element(By.XPATH, XPATHS["btn_declaraciones3"]).click()
+        for key in ("btn_declaraciones1", "btn_declaraciones2", "btn_declaraciones3"):
+            wait.until(EC.element_to_be_clickable((By.XPATH, XPATHS[key]))).click()
+            time.sleep(1.0)
 
-        # Cambiar al iframe de la aplicación
-        WebDriverWait(driver, 15).until(
-            EC.frame_to_be_available_and_switch_to_it((By.ID, "iframeApplication"))
-        )
-        time.sleep(3)
+        # Cambiar al iframe
+        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "iframeApplication")))
+        time.sleep(2.5)
 
         # Selección de periodos
-        Select(driver.find_element(By.ID, "periodo_tributario_1")).select_by_value(mes_valor)
-        Select(driver.find_element(By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioInicioAnio"]')).select_by_visible_text(anio_texto)
+        Select(wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_1")))).select_by_value(mes_valor)
+        Select(wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioInicioAnio"]')))).select_by_visible_text(anio_texto)
 
-        Select(driver.find_element(By.ID, "periodo_tributario_2")).select_by_value(mes_valor)
-        Select(driver.find_element(By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioFinAnio"]')).select_by_visible_text(anio_texto)
+        Select(wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_2")))).select_by_value(mes_valor)
+        Select(wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioFinAnio"]')))).select_by_visible_text(anio_texto)
 
         # Buscar
-        WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, '//button[@ng-click="buscarConstancia()"]'))
-        ).click()
-        time.sleep(1)
+        wait.until(EC.element_to_be_clickable((By.XPATH, '//button[@ng-click="buscarConstancia()"]'))).click()
+        time.sleep(1.2)
 
         rows = driver.find_elements(By.XPATH, '//table[contains(@class,"table")]/tbody/tr')
 
@@ -127,62 +173,62 @@ def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: s
 
         return list(best.values())
 
+    except Exception as e:
+        png, html = save_artifacts(driver)
+        raise RuntimeError(f"{type(e).__name__}: {e}. Capturas guardadas: {os.path.basename(png)}, {os.path.basename(html)}") from e
     finally:
         driver.quit()
-
 
 # -------------------------
 # STREAMLIT UI
 # -------------------------
-st.set_page_config(page_title="Consultas SUNAT (Demo)", page_icon="🧾", layout="centered")
-st.title("🧾 Consulta de Declaraciones SUNAT (Demo)")
+st.set_page_config(page_title="🧾 Declaraciones SUNAT", page_icon="🧾", layout="centered")
+st.title("🧾 Consulta de Declaraciones SUNAT")
 
-with st.expander("⚠️ Aviso"):
+with st.expander("⚠️ Aviso importante"):
     st.write(
-        "Esta herramienta automatiza la navegación en el portal de SUNAT usando Selenium. "
-        "Úsala bajo tu responsabilidad y respetando los Términos de Uso del portal. "
-        "Las credenciales se usan solo durante la sesión en tu equipo."
+        "Esta app automatiza el portal de SUNAT con Selenium. Úsala bajo tu responsabilidad y cumpliendo los Términos de Uso. "
+        "Las credenciales se usan solo durante la ejecución de tu consulta."
     )
 
+# Valores por defecto desde Secrets (opcional; no guardes claves)
+ruc_default = st.secrets.get("RUC_DEFAULT", "")
+usr_default = st.secrets.get("USR_DEFAULT", "")
+
 with st.form("form_login"):
-    st.subheader("Credenciales de Ingreso")
-    col1, col2 = st.columns(2)
-    with col1:
-        ruc = st.text_input("RUC", value="", max_chars=11)
-        usuario = st.text_input("Usuario SOL", value="")
-    with col2:
+    st.subheader("Credenciales")
+    c1, c2 = st.columns(2)
+    with c1:
+        ruc = st.text_input("RUC", value=ruc_default, max_chars=11)
+        usuario = st.text_input("Usuario SOL", value=usr_default)
+    with c2:
         clave = st.text_input("Clave SOL", value="", type="password")
 
     st.subheader("Periodo")
-    col3, col4 = st.columns(2)
-    with col3:
+    c3, c4 = st.columns(2)
+    with c3:
         mes_map = {
             "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
             "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
             "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
         }
-        mes_label = st.selectbox("Mes (inicio/fin)", list(mes_map.keys()), index=2)  # por defecto Marzo
+        mes_label = st.selectbox("Mes (inicio/fin)", list(mes_map.keys()), index=2)
         mes_valor = mes_map[mes_label]
-    with col4:
+    with c4:
         anio = st.text_input("Año (ej. 2025)", value="2025", max_chars=4)
 
-    headless = st.checkbox("Ejecutar en segundo plano (headless)", value=True)
-
+    headless = st.checkbox("Ejecutar en headless (recomendado en la nube)", value=True)
     submitted = st.form_submit_button("Consultar")
 
 if submitted:
-    if not (ruc and usuario and clave and anio and anio.isdigit()):
+    if not (ruc and usuario and clave and anio.isdigit()):
         st.warning("Completa todos los campos correctamente.")
     else:
         with st.spinner("Consultando en SUNAT..."):
             try:
                 data = run_sunat_scrape(
-                    ruc=ruc,
-                    usr=usuario,
-                    psw=clave,
-                    mes_valor=mes_valor,
-                    anio_texto=anio,
-                    headless=headless
+                    ruc=ruc, usr=usuario, psw=clave,
+                    mes_valor=mes_valor, anio_texto=anio, headless=headless
                 )
                 if not data:
                     st.info("No se encontraron resultados para el periodo seleccionado.")
@@ -191,16 +237,15 @@ if submitted:
                     df = pd.DataFrame(data)
                     st.dataframe(df, use_container_width=True)
 
-                    # Descargas
-                    colA, colB = st.columns(2)
-                    with colA:
+                    cA, cB = st.columns(2)
+                    with cA:
                         st.download_button(
                             "⬇️ Descargar JSON",
                             data=json.dumps(data, ensure_ascii=False, indent=2),
                             file_name=f"sunat_{ruc}_{anio}{mes_valor}.json",
                             mime="application/json"
                         )
-                    with colB:
+                    with cB:
                         st.download_button(
                             "⬇️ Descargar CSV",
                             data=df.to_csv(index=False),
@@ -208,9 +253,10 @@ if submitted:
                             mime="text/csv"
                         )
 
-                    # Opcional: ver JSON crudo
                     with st.expander("Ver JSON crudo"):
                         st.code(json.dumps(data, ensure_ascii=False, indent=2), language="json")
 
             except Exception as e:
-                st.error(f"Ocurrió un error durante la consulta: {e}")
+                st.error(str(e))
+                st.info("Revisa los archivos 'sunat_error.png' y 'sunat_error.html' generados en el directorio de la app para diagnóstico.")
+
