@@ -1,0 +1,4 @@
+streamlit>=1.36
+selenium>=4.23
+webdriver-manager>=4.0
+pandas>=2.2
