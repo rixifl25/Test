@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -15,14 +15,15 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
-
 # =========================
 # Config & Constantes
 # =========================
 st.set_page_config(page_title="Matriz de Cumplimiento 0621", page_icon="🧾", layout="wide")
 
 URL_START = (
-    "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm"
+    "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/"
+    "oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&"
+    "originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm"
 )
 
 XPATHS = {
@@ -34,7 +35,6 @@ XPATHS = {
     "btn_declaraciones2": '//*[@id="nivel3_55_2_1"]',
     "btn_declaraciones3": '//*[@id="nivel4_55_2_1_1_1"]',
 }
-
 
 # =========================
 # Estilos (look & feel)
@@ -82,7 +82,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
 # =========================
 # Sidebar (visual)
 # =========================
@@ -99,13 +98,13 @@ with st.sidebar:
     st.markdown("</div></div>", unsafe_allow_html=True)
     st.caption("Barra ilustrativa, no interactiva.")
 
-
 # =========================
 # Selenium helpers
 # =========================
-def build_driver():
+def build_driver(headless: bool = True):
     chrome_options = Options()
-    chrome_options.add_argument("--headless=new")  # SIEMPRE headless
+    if headless:
+        chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
@@ -134,7 +133,6 @@ def build_driver():
         pass
     return driver
 
-
 def save_artifacts(driver, prefix="sunat_error"):
     outdir = os.path.abspath(".")
     png = os.path.join(outdir, f"{prefix}.png")
@@ -147,28 +145,30 @@ def save_artifacts(driver, prefix="sunat_error"):
     except Exception: pass
     return png, html
 
-
 def _nro_to_int(s: str) -> int:
     s = (s or "").strip()
     digits = "".join(ch for ch in s if ch.isdigit())
     return int(digits) if digits else -1
 
-
 # =========================
-# Scraping: enero → mes actual (año actual) / 12 meses (años pasados)
+# Scrape: sesión completa por mes (login → menú → iframe → búsqueda → parseo)
 # =========================
-def scrape_year_status(ruc: str, usr: str, psw: str, year: int, now_dt: datetime) -> dict:
+def scrape_one_month_0621(ruc: str, usr: str, psw: str, year: int, month: int, headless: bool) -> dict:
     """
-    Retorna { 'YYYYMM': {'encontrado': bool, 'fila': {...} or None} }.
-    Solo considera Formulario == '0621'. Para cada mes toma la fila con mayor NroOrden.
-    Enero→mes actual si year == ahora.year; de lo contrario 12 meses.
+    Ejecuta TODO el flujo para un solo mes, en una nueva sesión:
+      - Abre navegador
+      - Login
+      - Entra a Mis declaraciones
+      - Cambia a iframe
+      - Selecciona periodo (inicio=fin=mes)
+      - Busca y retorna la mejor fila (mayor NroOrden) solo Formulario 0621
+    Devuelve: {"encontrado": bool, "fila": {...} or None}
     """
-    driver = build_driver()
+    driver = build_driver(headless=headless)
     wait = WebDriverWait(driver, 25)
-    result = {}
-
     try:
         driver.get(URL_START)
+
         # Login
         wait.until(EC.presence_of_element_located((By.XPATH, XPATHS["ruc"]))).send_keys(ruc)
         driver.find_element(By.XPATH, XPATHS["usuario"]).send_keys(usr)
@@ -183,71 +183,62 @@ def scrape_year_status(ruc: str, usr: str, psw: str, year: int, now_dt: datetime
 
         # Iframe
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "iframeApplication")))
-        time.sleep(1.0)
+        time.sleep(0.8)
 
-        # Selects reutilizables
+        # Selects y búsqueda
         sel_mes_ini = wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_1")))
         sel_anio_ini = wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioInicioAnio"]')))
         sel_mes_fin = wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_2")))
         sel_anio_fin = wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioFinAnio"]')))
         btn_buscar = wait.until(EC.element_to_be_clickable((By.XPATH, '//button[@ng-click="buscarConstancia()"]')))
 
-        # Año fijo
         Select(sel_anio_ini).select_by_visible_text(str(year))
         Select(sel_anio_fin).select_by_visible_text(str(year))
 
-        # Rango de meses
-        month_end = now_dt.month if year == now_dt.year else 12
-        for m in range(1, month_end + 1):
-            mes_valor = f"{m:02d}"
-            periodo_key = f"{year}{mes_valor}"
+        mes_valor = f"{month:02d}"
+        Select(sel_mes_ini).select_by_value(mes_valor)
+        Select(sel_mes_fin).select_by_value(mes_valor)
+        btn_buscar.click()
+        time.sleep(0.9)
 
-            Select(sel_mes_ini).select_by_value(mes_valor)
-            Select(sel_mes_fin).select_by_value(mes_valor)
-            btn_buscar.click()
-            time.sleep(0.9)
+        # Parse tabla
+        rows = driver.find_elements(By.XPATH, '//table[contains(@class,"table")]/tbody/tr')
+        best_row = None
+        for row in rows:
+            cols = row.find_elements(By.TAG_NAME, 'td')
+            if not cols or len(cols) < 9 or not cols[0].text.strip().isdigit():
+                continue
+            fila = {
+                "ID": cols[0].text.strip(),
+                "Periodo": cols[1].text.strip(),
+                "Formulario": cols[2].text.strip(),
+                "Descripcion": cols[3].text.strip(),
+                "NroOrden": cols[4].text.strip(),
+                "FechaPresentacion": cols[5].text.strip(),
+                "Banco": cols[6].text.strip(),
+                "Importe": cols[7].text.strip(),
+            }
+            if fila["Formulario"].strip() != "0621":
+                continue
+            if (best_row is None) or (_nro_to_int(fila["NroOrden"]) > _nro_to_int(best_row["NroOrden"])):
+                best_row = fila
 
-            rows = driver.find_elements(By.XPATH, '//table[contains(@class,"table")]/tbody/tr')
-            best_row = None
-            for row in rows:
-                cols = row.find_elements(By.TAG_NAME, 'td')
-                if not cols or len(cols) < 9 or not cols[0].text.strip().isdigit():
-                    continue
-
-                fila = {
-                    "ID": cols[0].text.strip(),
-                    "Periodo": cols[1].text.strip(),
-                    "Formulario": cols[2].text.strip(),
-                    "Descripcion": cols[3].text.strip(),
-                    "NroOrden": cols[4].text.strip(),
-                    "FechaPresentacion": cols[5].text.strip(),
-                    "Banco": cols[6].text.strip(),
-                    "Importe": cols[7].text.strip(),
-                }
-
-                # Solo 0621
-                if fila["Formulario"].strip() != "0621":
-                    continue
-
-                if (best_row is None) or (_nro_to_int(fila["NroOrden"]) > _nro_to_int(best_row["NroOrden"])):
-                    best_row = fila
-
-            result[periodo_key] = {"encontrado": best_row is not None, "fila": best_row}
-
-        return result
+        return {"encontrado": best_row is not None, "fila": best_row}
 
     except Exception as e:
-        png, html = save_artifacts(driver)
-        raise RuntimeError(f"{type(e).__name__}: {e}. Capturas: {os.path.basename(png)}, {os.path.basename(html)}") from e
+        png, html = save_artifacts(driver, prefix=f"sunat_error_{year}{month:02d}")
+        return {"encontrado": False, "fila": None, "error": f"{type(e).__name__}: {e}"}
     finally:
-        driver.quit()
-
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
 # =========================
 # UI principal
 # =========================
 st.markdown("<div class='h-page'>Inicio</div>", unsafe_allow_html=True)
-st.markdown("<div class='h-sub'>Visualiza la matriz de cumplimiento tributario y un resumen del estado mensual (Formulario 0621).</div>", unsafe_allow_html=True)
+st.markdown("<div class='h-sub'>Visualiza la matriz de cumplimiento tributario (Formulario 0621) mes a mes.</div>", unsafe_allow_html=True)
 
 with st.expander("⚠️ Aviso importante"):
     st.write("Esta app automatiza el portal de SUNAT con Selenium. Úsala bajo tu responsabilidad. Las credenciales no se almacenan.")
@@ -271,97 +262,107 @@ with st.form("form_login"):
         razon = st.text_input("Razón social (opcional)", value=razon_default)
     with c3:
         anio = st.number_input("Año", min_value=2005, max_value=anio_actual, value=anio_actual, step=1)
-        st.caption(f"Se consulta de enero a {now.month:02d}/{int(anio)} si es el año actual; de lo contrario 12 meses.")
+        show_browser = st.checkbox("Mostrar navegador (desactivar headless)", value=False)
+        st.caption("Si lo activas, verás la ventana de Chrome durante el proceso.")
+    st.caption(f"Se consulta de enero a {now.month:02d}/{int(anio)} si es el año actual; si es anterior, los 12 meses.")
     submitted = st.form_submit_button("Consultar")
 
 if submitted:
     if not (ruc and usuario and clave):
         st.warning("Completa RUC, Usuario y Clave.")
     else:
-        with st.spinner(f"Consultando SUNAT para el año {int(anio)} (Formulario 0621)…"):
+        # Rango de meses
+        month_end = now.month if int(anio) == now.year else 12
+        headless = not show_browser
+
+        st.info(f"Ejecutando flujo completo por cada periodo (login independiente) para {int(anio)}…")
+        registros = []
+        prog = st.progress(0.0)
+        total_steps = month_end
+        ok_count = 0
+
+        for idx, m in enumerate(range(1, month_end + 1), start=1):
+            periodo_key = f"{int(anio)}{m:02d}"
+            with st.spinner(f"Procesando periodo {periodo_key}…"):
+                res = scrape_one_month_0621(ruc, usuario, clave, int(anio), m, headless=headless)
+
+            estado = "Declarado" if res.get("encontrado") else "No declarado"
+            if estado == "Declarado":
+                ok_count += 1
+
+            # Formato YYYY/MM
+            periodo_fmt = f"{int(anio)}/{m:02d}"
+            registros.append({
+                "PeriodoNum": int(anio) * 100 + m,
+                "RUC": ruc,
+                "Razon": razon or "—",
+                "Periodo": periodo_fmt,
+                "Vencimiento": "—",
+                "Perfil": "—",
+                "Estado": estado
+            })
+
+            prog.progress(idx / total_steps)
+
+        # Dataframe ordenado
+        df = pd.DataFrame(registros).sort_values("PeriodoNum").reset_index(drop=True)
+
+        # Layout principal: tabla + panel
+        left, right = st.columns([2.8, 1.2])
+
+        # -------- Tabla HTML estilizada
+        with left:
+            st.markdown("<div class='card'><h3>Matriz de Cumplimiento Tributario</h3>", unsafe_allow_html=True)
+            header = """
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>RUC</th>
+                  <th>Razón social</th>
+                  <th>Periodo tributario</th>
+                  <th>Vencimiento</th>
+                  <th>Perfil de cumplimiento</th>
+                  <th>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+            """
+            rows_html = []
+            for _, row in df.iterrows():
+                badge_class = "ok" if row["Estado"] == "Declarado" else "no"
+                badge_text = "Declarado" if row["Estado"] == "Declarado" else "No declarado"
+                rows_html.append(f"""
+                  <tr>
+                    <td>{row['RUC']}</td>
+                    <td>{row['Razon']}</td>
+                    <td>{row['Periodo']}</td>
+                    <td>{row['Vencimiento']}</td>
+                    <td>{row['Perfil']}</td>
+                    <td><span class="badge {badge_class}">{badge_text}</span></td>
+                  </tr>
+                """)
+            footer = "</tbody></table></div>"
+            st.markdown(header + "\n".join(rows_html) + footer, unsafe_allow_html=True)
+
+        # -------- Panel de seguimiento (donut Presentados vs No presentados)
+        with right:
+            st.markdown("<div class='panel'><h3>Panel de seguimiento</h3>", unsafe_allow_html=True)
+            total = len(df)
+            presentados = ok_count
+            no_presentados = total - presentados
+
             try:
-                resumen = scrape_year_status(ruc, usuario, clave, int(anio), now)
+                import plotly.express as px
+                donut_df = pd.DataFrame(
+                    {"Estado": ["Presentados", "No presentados"],
+                     "Valor": [presentados, no_presentados]}
+                )
+                fig = px.pie(donut_df, names="Estado", values="Valor", hole=0.6)
+                fig.update_traces(textposition="inside", textinfo="percent+label")
+                fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
+                st.plotly_chart(fig, use_container_width=True)
+            except Exception:
+                st.metric("Presentados", f"{presentados}/{total}")
+                st.metric("No presentados", f"{no_presentados}/{total}")
 
-                # Construir matriz con Periodo formateado YYYY/MM y orden por mes
-                registros = []
-                for periodo_key, info in resumen.items():
-                    year_i = int(periodo_key[:4])
-                    month_i = int(periodo_key[4:])
-                    periodo_fmt = f"{year_i}/{month_i:02d}"  # YYYY/MM
-                    estado = "Declarado" if info["encontrado"] else "No declarado"
-                    registros.append({
-                        "PeriodoNum": year_i * 100 + month_i,
-                        "RUC": ruc,
-                        "Razon": razon or "—",
-                        "Periodo": periodo_fmt,
-                        "Vencimiento": "—",
-                        "Perfil": "—",
-                        "Estado": estado
-                    })
-
-                df = pd.DataFrame(registros).sort_values("PeriodoNum").reset_index(drop=True)
-
-                left, right = st.columns([2.8, 1.2])
-
-                # -------- Tabla HTML estilizada
-                with left:
-                    st.markdown("<div class='card'><h3>Matriz de Cumplimiento Tributario</h3>", unsafe_allow_html=True)
-                    header = """
-                    <table class="table">
-                      <thead>
-                        <tr>
-                          <th>RUC</th>
-                          <th>Razón social</th>
-                          <th>Periodo tributario</th>
-                          <th>Vencimiento</th>
-                          <th>Perfil de cumplimiento</th>
-                          <th>Estado</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                    """
-                    rows_html = []
-                    for _, row in df.iterrows():
-                        badge_class = "ok" if row["Estado"] == "Declarado" else "no"
-                        badge_text = "Declarado" if row["Estado"] == "Declarado" else "No declarado"
-                        rows_html.append(f"""
-                          <tr>
-                            <td>{row['RUC']}</td>
-                            <td>{row['Razon']}</td>
-                            <td>{row['Periodo']}</td>
-                            <td>{row['Vencimiento']}</td>
-                            <td>{row['Perfil']}</td>
-                            <td><span class="badge {badge_class}">{badge_text}</span></td>
-                          </tr>
-                        """)
-                    footer = "</tbody></table></div>"
-                    st.markdown(header + "\n".join(rows_html) + footer, unsafe_allow_html=True)
-
-                # -------- Panel de seguimiento (donut Presentados vs No presentados)
-                with right:
-                    st.markdown("<div class='panel'><h3>Panel de seguimiento</h3>", unsafe_allow_html=True)
-                    total = len(df)
-                    presentados = int((df["Estado"] == "Declarado").sum())
-                    no_presentados = total - presentados
-
-                    try:
-                        import plotly.express as px
-                        donut_df = pd.DataFrame(
-                            {"Estado": ["Presentados", "No presentados"],
-                             "Valor": [presentados, no_presentados]}
-                        )
-                        fig = px.pie(donut_df, names="Estado", values="Valor", hole=0.6)
-                        fig.update_traces(textposition="inside", textinfo="percent+label")
-                        fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
-                        st.plotly_chart(fig, use_container_width=True)
-                    except Exception:
-                        st.metric("Presentados", f"{presentados}/{total}")
-                        st.metric("No presentados", f"{no_presentados}/{total}")
-
-                    st.caption("Basado en meses con Formulario 0621 presentados vs no presentados.")
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-            except Exception as e:
-                st.error(str(e))
-                st.info("Se generaron 'sunat_error.png' y 'sunat_error.html' en el servidor para diagnóstico.")
-
+            st.caption("Basado en meses con Formulario 0621 presentados vs no presentados.")
