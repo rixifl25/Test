@@ -1,6 +1,6 @@
+# app.py
 import os
 import time
-import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import pandas as pd
@@ -15,10 +15,11 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+
 # =========================
 # Config & Constantes
 # =========================
-st.set_page_config(page_title="🧾 Matriz de Cumplimiento 0621", page_icon="🧾", layout="wide")
+st.set_page_config(page_title="Matriz de Cumplimiento 0621", page_icon="🧾", layout="wide")
 
 URL_START = (
     "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/"
@@ -36,36 +37,73 @@ XPATHS = {
     "btn_declaraciones3": '//*[@id="nivel4_55_2_1_1_1"]',
 }
 
+
 # =========================
-# Barra lateral (solo visual)
+# Estilos (look & feel)
 # =========================
-NOMBRE_UI = st.secrets.get("NOMBRE_UI", "Jose Joya")  # cámbialo en secrets si quieres
+st.markdown("""
+<style>
+[data-testid="stSidebar"] {min-width: 280px; max-width: 280px;}
+.sidebar-wrap .name {font-size:1.1rem;font-weight:800;}
+.sidebar-wrap .sub {color:#6B7280;margin-bottom:18px;}
+.menu {margin-top:10px;}
+.menu .item {
+  display:flex; align-items:center; gap:10px;
+  padding:10px 12px; border-radius:12px; margin-bottom:6px;
+  font-weight:600; color:#111827;
+}
+.menu .item.active { background:#1118270D; border:1px solid #E5E7EB; }
+.menu .icon {width:20px; text-align:center}
+
+.h-page {font-size:1.6rem; font-weight:800; margin-bottom:2px;}
+.h-sub  {color:#6B7280; margin-bottom:18px;}
+.card {
+  background:#fff; border:1px solid #E5E7EB; border-radius:16px;
+  padding:16px 16px 8px 16px; box-shadow:0 1px 2px rgba(0,0,0,0.02);
+}
+.card h3 {font-size:1.05rem; font-weight:800; margin:0 0 10px 0;}
+.table {width:100%; border-collapse:separate; border-spacing:0 8px;}
+.table thead th {
+  color:#6B7280; font-weight:700; font-size:0.9rem; text-align:left; padding:10px 12px;
+}
+.table tbody tr {background:#F9FAFB; border:1px solid #E5E7EB;}
+.table tbody td {padding:12px; font-size:0.95rem;}
+.table tbody tr {border-radius:12px;}
+.table tbody tr td:first-child {border-top-left-radius:12px; border-bottom-left-radius:12px;}
+.table tbody tr td:last-child  {border-top-right-radius:12px; border-bottom-right-radius:12px;}
+
+.badge {
+  display:inline-block; padding:6px 10px; border-radius:10px; font-weight:700; font-size:0.8rem;
+  border:1px solid;
+}
+.badge.ok { color:#065F46; background:#ECFDF5; border-color:#A7F3D0; }
+.badge.no { color:#374151; background:#F3F4F6; border-color:#E5E7EB; }
+
+.panel {background:#fff; border:1px solid #E5E7EB; border-radius:16px; padding:16px;}
+.block-container {padding-top: 1.2rem;}
+</style>
+""", unsafe_allow_html=True)
+
+
+# =========================
+# Sidebar (visual)
+# =========================
 with st.sidebar:
-    st.markdown(
-        """
-        <style>
-        [data-testid="stSidebar"] {min-width: 280px; max-width: 280px;}
-        .menu-item {padding:10px 12px;border-radius:10px;margin-bottom:6px;font-weight:600;}
-        .menu-item.active {background:#1118270F;border:1px solid #E5E7EB;}
-        .menu-item span {margin-left:8px;}
-        .saludo {font-size:1.1rem;font-weight:700;margin-bottom:8px;}
-        .subtext {color:#6B7280;margin-bottom:16px;}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown(f"<div class='saludo'>Hola<br>{NOMBRE_UI}</div>", unsafe_allow_html=True)
-    st.markdown("<div class='subtext'>Panel de cumplimiento tributario</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sidebar-wrap'>", unsafe_allow_html=True)
+    st.markdown("<div class='name'>Hola<br>Javier Pérez</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub'>Panel de cumplimiento tributario</div>", unsafe_allow_html=True)
+    st.markdown("<div class='menu'>", unsafe_allow_html=True)
+    st.markdown("<div class='item active'><div class='icon'>🏠</div>Inicio</div>", unsafe_allow_html=True)
+    st.markdown("<div class='item'><div class='icon'>🧾</div>Comprobante electro..</div>", unsafe_allow_html=True)
+    st.markdown("<div class='item'><div class='icon'>📥</div>Buzón electrónico</div>", unsafe_allow_html=True)
+    st.markdown("<div class='item'><div class='icon'>🧩</div>Extensiones</div>", unsafe_allow_html=True)
+    st.markdown("<div class='item'><div class='icon'>📊</div>Reportes</div>", unsafe_allow_html=True)
+    st.markdown("</div></div>", unsafe_allow_html=True)
+    st.caption("Barra ilustrativa, no interactiva.")
 
-    st.markdown("<div class='menu-item active'>🏠 <span>Inicio</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='menu-item'>🧾 <span>Comprobante electro..</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='menu-item'>📥 <span>Buzón electrónico</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='menu-item'>🧩 <span>Extensiones</span></div>", unsafe_allow_html=True)
-    st.markdown("<div class='menu-item'>📊 <span>Reportes</span></div>", unsafe_allow_html=True)
-    st.caption("Esta barra es solo visual (no interactiva).")
 
 # =========================
-# Helpers Selenium
+# Selenium helpers
 # =========================
 def build_driver():
     chrome_options = Options()
@@ -98,6 +136,7 @@ def build_driver():
         pass
     return driver
 
+
 def save_artifacts(driver, prefix="sunat_error"):
     outdir = os.path.abspath(".")
     png = os.path.join(outdir, f"{prefix}.png")
@@ -110,10 +149,12 @@ def save_artifacts(driver, prefix="sunat_error"):
     except Exception: pass
     return png, html
 
+
 def _nro_to_int(s: str) -> int:
     s = (s or "").strip()
     digits = "".join(ch for ch in s if ch.isdigit())
     return int(digits) if digits else -1
+
 
 # =========================
 # Scraping: enero → mes actual (año actual) / 12 meses (años pasados)
@@ -122,7 +163,7 @@ def scrape_year_status(ruc: str, usr: str, psw: str, year: int, now_dt: datetime
     """
     Retorna { 'YYYYMM': {'encontrado': bool, 'fila': {...} or None} }.
     Solo considera Formulario == '0621'. Para cada mes toma la fila con mayor NroOrden.
-    Enero→mes actual si year == ahora.year, de lo contrario 12 meses.
+    Enero→mes actual si year == ahora.year; de lo contrario 12 meses.
     """
     driver = build_driver()
     wait = WebDriverWait(driver, 25)
@@ -146,7 +187,7 @@ def scrape_year_status(ruc: str, usr: str, psw: str, year: int, now_dt: datetime
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "iframeApplication")))
         time.sleep(1.0)
 
-        # Selects reusables
+        # Selects reutilizables
         sel_mes_ini = wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_1")))
         sel_anio_ini = wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioInicioAnio"]')))
         sel_mes_fin = wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_2")))
@@ -203,11 +244,12 @@ def scrape_year_status(ruc: str, usr: str, psw: str, year: int, now_dt: datetime
     finally:
         driver.quit()
 
+
 # =========================
 # UI principal
 # =========================
-st.title("Inicio")
-st.subheader("Matriz de Cumplimiento Tributario (Formulario 0621)")
+st.markdown("<div class='h-page'>Inicio</div>", unsafe_allow_html=True)
+st.markdown("<div class='h-sub'>Visualiza la matriz de cumplimiento tributario y un resumen del estado mensual (Formulario 0621).</div>", unsafe_allow_html=True)
 
 with st.expander("⚠️ Aviso importante"):
     st.write("Esta app automatiza el portal de SUNAT con Selenium. Úsala bajo tu responsabilidad. Las credenciales no se almacenan.")
@@ -242,37 +284,85 @@ if submitted:
             try:
                 resumen = scrape_year_status(ruc, usuario, clave, int(anio), now)
 
-                # Armar matriz
+                # Construir matriz con Periodo formateado YYYY/MM y orden por mes
                 registros = []
-                for periodo, info in sorted(resumen.items()):
+                for periodo_key, info in resumen.items():
+                    year_i = int(periodo_key[:4])
+                    month_i = int(periodo_key[4:])
+                    periodo_fmt = f"{year_i}/{month_i:02d}"  # YYYY/MM
                     estado = "Declarado" if info["encontrado"] else "No declarado"
                     registros.append({
+                        "PeriodoNum": year_i * 100 + month_i,
                         "RUC": ruc,
-                        "Razón social": razon or "—",
-                        "Periodo tributario": periodo,  # YYYYMM
+                        "Razon": razon or "—",
+                        "Periodo": periodo_fmt,
                         "Vencimiento": "—",
-                        "Perfil de cumplimiento": "—",
+                        "Perfil": "—",
                         "Estado": estado
                     })
-                df = pd.DataFrame(registros)
 
-                left, right = st.columns([2.7, 1.3])
+                df = pd.DataFrame(registros).sort_values("PeriodoNum").reset_index(drop=True)
+
+                left, right = st.columns([2.8, 1.2])
+
+                # -------- Tabla HTML estilizada
                 with left:
-                    st.markdown("### Matriz de Cumplimiento Tributario")
-                    st.dataframe(
-                        df,
-                        use_container_width=True,
-                        column_config={
-                            "RUC": st.column_config.TextColumn(width="small"),
-                            "Razón social": st.column_config.TextColumn(width="large"),
-                            "Periodo tributario": st.column_config.TextColumn(width="small"),
-                            "Vencimiento": st.column_config.TextColumn(width="small"),
-                            "Perfil de cumplimiento": st.column_config.TextColumn(width="small"),
-                            "Estado": st.column_config.TextColumn(width="small"),
-                        },
-                    )
+                    st.markdown("<div class='card'><h3>Matriz de Cumplimiento Tributario</h3>", unsafe_allow_html=True)
+                    header = """
+                    <table class="table">
+                      <thead>
+                        <tr>
+                          <th>RUC</th>
+                          <th>Razón social</th>
+                          <th>Periodo tributario</th>
+                          <th>Vencimiento</th>
+                          <th>Perfil de cumplimiento</th>
+                          <th>Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                    """
+                    rows_html = []
+                    for _, row in df.iterrows():
+                        badge_class = "ok" if row["Estado"] == "Declarado" else "no"
+                        badge_text = "Declarado" if row["Estado"] == "Declarado" else "No declarado"
+                        rows_html.append(f"""
+                          <tr>
+                            <td>{row['RUC']}</td>
+                            <td>{row['Razon']}</td>
+                            <td>{row['Periodo']}</td>
+                            <td>{row['Vencimiento']}</td>
+                            <td>{row['Perfil']}</td>
+                            <td><span class="badge {badge_class}">{badge_text}</span></td>
+                          </tr>
+                        """)
+                    footer = "</tbody></table></div>"
+                    st.markdown(header + "\n".join(rows_html) + footer, unsafe_allow_html=True)
 
+                # -------- Panel de seguimiento (donut Presentados vs No presentados)
                 with right:
-                    st.markdown("### Panel de seguimiento")
+                    st.markdown("<div class='panel'><h3>Panel de seguimiento</h3>", unsafe_allow_html=True)
                     total = len(df)
-                    presentados = int((df["Estado"] == "
+                    presentados = int((df["Estado"] == "Declarado").sum())
+                    no_presentados = total - presentados
+
+                    try:
+                        import plotly.express as px
+                        donut_df = pd.DataFrame(
+                            {"Estado": ["Presentados", "No presentados"],
+                             "Valor": [presentados, no_presentados]}
+                        )
+                        fig = px.pie(donut_df, names="Estado", values="Valor", hole=0.6)
+                        fig.update_traces(textposition="inside", textinfo="percent+label")
+                        fig.update_layout(margin=dict(l=0, r=0, t=10, b=0), height=300)
+                        st.plotly_chart(fig, use_container_width=True)
+                    except Exception:
+                        st.metric("Presentados", f"{presentados}/{total}")
+                        st.metric("No presentados", f"{no_presentados}/{total}")
+
+                    st.caption("Basado en meses con Formulario 0621 presentados vs no presentados.")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            except Exception as e:
+                st.error(str(e))
+                st.info("Se generaron 'sunat_error.png' y 'sunat_error.html' en el servidor para diagnóstico.")
