@@ -1,8 +1,6 @@
-# app.py
 import os
 import time
-from datetime import datetime
-from zoneinfo import ZoneInfo
+import json
 import pandas as pd
 import streamlit as st
 
@@ -16,13 +14,9 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # -------------------------
-# Config
+# Constantes de la app
 # -------------------------
-st.set_page_config(page_title="Consulta 0621 por Periodo", page_icon="🧾", layout="centered")
-
-URL_START = (
-    "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm"
-)
+URL_START = "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm&state=rO0ABXQA701GcmNEbDZPZ28xODJOWWQ4aTNPT2krWUcrM0pTODAzTEJHTmtLRE1IT2pBQ2l2eW84em5lWjByM3RGY1BLT0tyQjEvdTBRaHNNUW8KWDJRQ0h3WmZJQWZyV0JBaGtTT0hWajVMZEg0Mm5ZdHlrQlFVaDFwMzF1eVl1V2tLS3ozUnVoZ1ovZisrQkZndGdSVzg1TXdRTmRhbAp1ek5OaXdFbG80TkNSK0E2NjZHeG0zNkNaM0NZL0RXa1FZOGNJOWZsYjB5ZXc3MVNaTUpxWURmNGF3dVlDK3pMUHdveHI2cnNIaWc1CkI3SkxDSnc9"
 
 XPATHS = {
     "ruc": '//*[@id="txtRuc"]',
@@ -34,12 +28,15 @@ XPATHS = {
     "btn_declaraciones3": '//*[@id="nivel4_55_2_1_1_1"]',
 }
 
-tz = ZoneInfo("America/Lima")
-
 # -------------------------
-# Helpers
+# Utilidades Selenium
 # -------------------------
 def build_driver(headless: bool = True):
+    """
+    Crea un driver de Chrome/Chromium que funciona:
+      - En Streamlit Cloud: usa /usr/bin/chromium y /usr/bin/chromedriver (instalados con packages.txt)
+      - En local: usa webdriver-manager para descargar un driver compatible
+    """
     chrome_options = Options()
     if headless:
         chrome_options.add_argument("--headless=new")
@@ -56,50 +53,49 @@ def build_driver(headless: bool = True):
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
     )
 
+    # Intento 1: binarios del contenedor (Streamlit Cloud)
     chromium_bin = os.environ.get("GOOGLE_CHROME_BIN") or "/usr/bin/chromium"
     chromedriver_bin = os.environ.get("CHROMEDRIVER_PATH") or "/usr/bin/chromedriver"
+
     if os.path.exists(chromium_bin) and os.path.exists(chromedriver_bin):
         chrome_options.binary_location = chromium_bin
         service = Service(chromedriver_bin)
     else:
+        # Intento 2: entorno local con webdriver-manager
         service = Service(ChromeDriverManager().install())
 
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    # best-effort: ocultar webdriver
+    # Ocultar webdriver (best-effort)
     try:
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": "Object.defineProperty(navigator, 'webdriver', { get: () => undefined })"
         })
     except Exception:
         pass
+
     return driver
 
 def save_artifacts(driver, prefix="sunat_error"):
+    """Guarda screenshot y HTML de la página actual para diagnóstico."""
     outdir = os.path.abspath(".")
     png = os.path.join(outdir, f"{prefix}.png")
     html = os.path.join(outdir, f"{prefix}.html")
-    try: driver.save_screenshot(png)
-    except Exception: pass
+    try:
+        driver.save_screenshot(png)
+    except Exception:
+        pass
     try:
         with open(html, "w", encoding="utf-8") as f:
             f.write(driver.page_source)
-    except Exception: pass
+    except Exception:
+        pass
     return png, html
 
-def _nro_to_int(s: str) -> int:
-    s = (s or "").strip()
-    digits = "".join(ch for ch in s if ch.isdigit())
-    return int(digits) if digits else -1
-
-def scrape_one_month_0621(ruc: str, usr: str, psw: str, year: int, month: int, headless: bool):
-    """
-    Ejecuta TODO el flujo para un solo periodo (year, month) y retorna:
-      {"encontrado": bool, "fila": {...} or None}
-    Solo considera Formulario 0621 y elige la fila con mayor NroOrden.
-    """
+def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: str, headless: bool = True):
     driver = build_driver(headless=headless)
     wait = WebDriverWait(driver, 25)
+
     try:
         driver.get(URL_START)
 
@@ -108,40 +104,48 @@ def scrape_one_month_0621(ruc: str, usr: str, psw: str, year: int, month: int, h
         driver.find_element(By.XPATH, XPATHS["usuario"]).send_keys(usr)
         driver.find_element(By.XPATH, XPATHS["clave"]).send_keys(psw)
         driver.find_element(By.XPATH, XPATHS["btn_ingresar"]).click()
-        time.sleep(1.0)
+        time.sleep(1.5)
 
-        # Menú
+        # Navegación “Mis declaraciones”
         for key in ("btn_declaraciones1", "btn_declaraciones2", "btn_declaraciones3"):
             wait.until(EC.element_to_be_clickable((By.XPATH, XPATHS[key]))).click()
-            time.sleep(0.7)
+            time.sleep(1.0)
 
-        # Iframe
+        # Cambiar al iframe
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "iframeApplication")))
-        time.sleep(0.8)
+        time.sleep(2.5)
 
-        # Selects y búsqueda
-        sel_mes_ini = wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_1")))
-        sel_anio_ini = wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioInicioAnio"]')))
-        sel_mes_fin = wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_2")))
-        sel_anio_fin = wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioFinAnio"]')))
-        btn_buscar = wait.until(EC.element_to_be_clickable((By.XPATH, '//button[@ng-click="buscarConstancia()"]')))
+        # Selección de periodos
+        Select(wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_1")))).select_by_value(mes_valor)
+        Select(wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioInicioAnio"]')))).select_by_visible_text(anio_texto)
 
-        Select(sel_anio_ini).select_by_visible_text(str(year))
-        Select(sel_anio_fin).select_by_visible_text(str(year))
+        Select(wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_2")))).select_by_value(mes_valor)
+        Select(wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioFinAnio"]')))).select_by_visible_text(anio_texto)
 
-        mes_valor = f"{month:02d}"
-        Select(sel_mes_ini).select_by_value(mes_valor)
-        Select(sel_mes_fin).select_by_value(mes_valor)
-        btn_buscar.click()
-        time.sleep(1.0)
+        # Buscar
+        wait.until(EC.element_to_be_clickable((By.XPATH, '//button[@ng-click="buscarConstancia()"]'))).click()
+        time.sleep(1.2)
 
-        # Parse tabla
         rows = driver.find_elements(By.XPATH, '//table[contains(@class,"table")]/tbody/tr')
-        best_row = None
+
+        def _nro_to_int(s: str) -> int:
+            s = s.strip()
+            digits = "".join(ch for ch in s if ch.isdigit())
+            return int(digits) if digits else -1
+
+        best = {}  # (Periodo, Formulario) -> fila con mayor NroOrden
         for row in rows:
             cols = row.find_elements(By.TAG_NAME, 'td')
-            if not cols or len(cols) < 9 or not cols[0].text.strip().isdigit():
+            if not cols or len(cols) < 9:
                 continue
+            if not cols[0].text.strip().isdigit():
+                continue
+
+            try:
+                cols[8].find_element(By.TAG_NAME, 'a')
+                estado = "pagado"
+            except NoSuchElementException:
+                estado = "sin pagar"
 
             fila = {
                 "ID": cols[0].text.strip(),
@@ -152,91 +156,99 @@ def scrape_one_month_0621(ruc: str, usr: str, psw: str, year: int, month: int, h
                 "FechaPresentacion": cols[5].text.strip(),
                 "Banco": cols[6].text.strip(),
                 "Importe": cols[7].text.strip(),
+                "Estado": estado
             }
 
-            # Solo 0621
-            if fila["Formulario"].strip() != "0621":
-                continue
+            key = (fila["Periodo"], fila["Formulario"])
+            if key not in best or _nro_to_int(fila["NroOrden"]) > _nro_to_int(best[key]["NroOrden"]):
+                best[key] = fila
 
-            if (best_row is None) or (_nro_to_int(fila["NroOrden"]) > _nro_to_int(best_row["NroOrden"])):
-                best_row = fila
-
-        return {"encontrado": best_row is not None, "fila": best_row}
+        return list(best.values())
 
     except Exception as e:
-        save_artifacts(driver, prefix=f"sunat_error_{year}{month:02d}")
-        return {"encontrado": False, "fila": None, "error": f"{type(e).__name__}: {e}"}
+        png, html = save_artifacts(driver)
+        raise RuntimeError(f"{type(e).__name__}: {e}. Capturas guardadas: {os.path.basename(png)}, {os.path.basename(html)}") from e
     finally:
-        try: driver.quit()
-        except Exception: pass
+        driver.quit()
 
 # -------------------------
-# UI
+# STREAMLIT UI
 # -------------------------
-st.title("🧾 Consulta Formulario 0621 por Periodo")
+st.set_page_config(page_title="🧾 Declaraciones SUNAT", page_icon="🧾", layout="centered")
+st.title("🧾 Consulta de Declaraciones SUNAT")
+
 with st.expander("⚠️ Aviso importante"):
-    st.write("Esta app automatiza el portal de SUNAT con Selenium. Úsala bajo tu responsabilidad. Las credenciales no se almacenan.")
+    st.write(
+        "Esta app automatiza el portal de SUNAT con Selenium. Úsala bajo tu responsabilidad y cumpliendo los Términos de Uso. "
+        "Las credenciales se usan solo durante la ejecución de tu consulta."
+    )
 
-# Defaults opcionales desde secrets
+# Valores por defecto desde Secrets (opcional; no guardes claves)
 ruc_default = st.secrets.get("RUC_DEFAULT", "")
 usr_default = st.secrets.get("USR_DEFAULT", "")
-razon_default = st.secrets.get("RAZON_DEFAULT", "")
 
-now = datetime.now(tz)
-anio_actual = now.year
-mes_actual = now.month
-
-with st.form("form"):
+with st.form("form_login"):
     st.subheader("Credenciales")
     c1, c2 = st.columns(2)
     with c1:
         ruc = st.text_input("RUC", value=ruc_default, max_chars=11)
         usuario = st.text_input("Usuario SOL", value=usr_default)
     with c2:
-        clave = st.text_input("Clave SOL", type="password")
-        razon = st.text_input("Razón social (opcional)", value=razon_default)
+        clave = st.text_input("Clave SOL", value="", type="password")
 
-    st.subheader("Periodo a consultar")
-    c3, c4, c5 = st.columns([1, 1, 1.2])
+    st.subheader("Periodo")
+    c3, c4 = st.columns(2)
     with c3:
-        meses = [
-            ("01 - Enero", 1), ("02 - Febrero", 2), ("03 - Marzo", 3), ("04 - Abril", 4),
-            ("05 - Mayo", 5), ("06 - Junio", 6), ("07 - Julio", 7), ("08 - Agosto", 8),
-            ("09 - Septiembre", 9), ("10 - Octubre", 10), ("11 - Noviembre", 11), ("12 - Diciembre", 12),
-        ]
-        mes_label = st.selectbox("Mes", [m[0] for m in meses], index=mes_actual-1)
-        mes_value = dict(meses)[mes_label]
+        mes_map = {
+            "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
+            "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
+            "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
+        }
+        mes_label = st.selectbox("Mes (inicio/fin)", list(mes_map.keys()), index=2)
+        mes_valor = mes_map[mes_label]
     with c4:
-        anio = st.number_input("Año", min_value=2005, max_value=anio_actual, value=anio_actual, step=1)
-    with c5:
-        show_browser = st.checkbox("Mostrar navegador (desactivar headless)", value=False)
-        st.caption("En servidores sin entorno gráfico, puede que no se muestre.")
+        anio = st.text_input("Año (ej. 2025)", value="2025", max_chars=4)
 
+    headless = st.checkbox("Ejecutar en headless (recomendado en la nube)", value=True)
     submitted = st.form_submit_button("Consultar")
 
 if submitted:
-    if not (ruc and usuario and clave):
-        st.warning("Completa RUC, Usuario y Clave.")
+    if not (ruc and usuario and clave and anio.isdigit()):
+        st.warning("Completa todos los campos correctamente.")
     else:
-        headless = not show_browser
-        periodo_fmt = f"{int(anio)}/{int(mes_value):02d}"
-        with st.spinner(f"Consultando 0621 para {periodo_fmt}…"):
-            res = scrape_one_month_0621(ruc, usuario, clave, int(anio), int(mes_value), headless=headless)
+        with st.spinner("Consultando en SUNAT..."):
+            try:
+                data = run_sunat_scrape(
+                    ruc=ruc, usr=usuario, psw=clave,
+                    mes_valor=mes_valor, anio_texto=anio, headless=headless
+                )
+                if not data:
+                    st.info("No se encontraron resultados para el periodo seleccionado.")
+                else:
+                    st.success(f"Se encontraron {len(data)} registros.")
+                    df = pd.DataFrame(data)
+                    st.dataframe(df, use_container_width=True)
 
-        # Preparar tabla final (una fila)
-        estado = "Declarado" if res.get("encontrado") else "No declarado"
-        fila = res.get("fila") or {}
-        df = pd.DataFrame([{
-            "RUC": ruc,
-            "Razón social": razon or "—",
-            "Periodo tributario": periodo_fmt,
-            "Estado": estado,
-            "Fecha presentación": fila.get("FechaPresentacion", "—") if estado == "Declarado" else "—",
-            "NroOrden": fila.get("NroOrden", "—") if estado == "Declarado" else "—",
-            "Importe": fila.get("Importe", "—") if estado == "Declarado" else "—",
-            "Banco": fila.get("Banco", "—") if estado == "Declarado" else "—",
-            "Descripción": fila.get("Descripcion", "—") if estado == "Declarado" else "—",
-        }])
+                    cA, cB = st.columns(2)
+                    with cA:
+                        st.download_button(
+                            "⬇️ Descargar JSON",
+                            data=json.dumps(data, ensure_ascii=False, indent=2),
+                            file_name=f"sunat_{ruc}_{anio}{mes_valor}.json",
+                            mime="application/json"
+                        )
+                    with cB:
+                        st.download_button(
+                            "⬇️ Descargar CSV",
+                            data=df.to_csv(index=False),
+                            file_name=f"sunat_{ruc}_{anio}{mes_valor}.csv",
+                            mime="text/csv"
+                        )
 
-        st.success(f"Resultado para {periodo_fmt}: {estado}")
-        st.dataframe(df, use_container_width=True)
+                    with st.expander("Ver JSON crudo"):
+                        st.code(json.dumps(data, ensure_ascii=False, indent=2), language="json")
+
+            except Exception as e:
+                st.error(str(e))
+                st.info("Revisa los archivos 'sunat_error.png' y 'sunat_error.html' generados en el directorio de la app para diagnóstico.")
+
