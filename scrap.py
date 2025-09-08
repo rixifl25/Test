@@ -3,6 +3,8 @@ import time
 import json
 import pandas as pd
 import streamlit as st
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
@@ -163,7 +165,9 @@ def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: s
             if key not in best or _nro_to_int(fila["NroOrden"]) > _nro_to_int(best[key]["NroOrden"]):
                 best[key] = fila
 
-        return list(best.values())
+        # Filtrar solo Formulario 0621
+        result = [fila for fila in best.values() if fila.get("Formulario") == "0621"]
+        return result
 
     except Exception as e:
         png, html = save_artifacts(driver)
@@ -187,6 +191,30 @@ with st.expander("⚠️ Aviso importante"):
 ruc_default = st.secrets.get("RUC_DEFAULT", "")
 usr_default = st.secrets.get("USR_DEFAULT", "")
 
+# --- Cálculo de mes/año por defecto = mes anterior (America/Lima) ---
+now_lima = datetime.now(ZoneInfo("America/Lima"))
+if now_lima.month == 1:
+    default_month_num = 12
+    default_year_str = str(now_lima.year - 1)
+else:
+    default_month_num = now_lima.month - 1
+    default_year_str = str(now_lima.year)
+
+# Mapas de meses
+mes_map = {
+    "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
+    "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
+    "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
+}
+month_labels_in_order = [
+    "01 - Enero","02 - Febrero","03 - Marzo","04 - Abril","05 - Mayo","06 - Junio",
+    "07 - Julio","08 - Agosto","09 - Septiembre","10 - Octubre","11 - Noviembre","12 - Diciembre"
+]
+default_label = f"{default_month_num:02d} - " + [
+    "Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"
+][default_month_num-1]
+default_index = month_labels_in_order.index(default_label)
+
 with st.form("form_login"):
     st.subheader("Credenciales")
     c1, c2 = st.columns(2)
@@ -199,15 +227,10 @@ with st.form("form_login"):
     st.subheader("Periodo")
     c3, c4 = st.columns(2)
     with c3:
-        mes_map = {
-            "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
-            "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
-            "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
-        }
-        mes_label = st.selectbox("Mes (inicio/fin)", list(mes_map.keys()), index=2)
+        mes_label = st.selectbox("Mes (inicio/fin)", month_labels_in_order, index=default_index)
         mes_valor = mes_map[mes_label]
     with c4:
-        anio = st.text_input("Año (ej. 2025)", value="2025", max_chars=4)
+        anio = st.text_input("Año (ej. 2025)", value=default_year_str, max_chars=4)
 
     headless = st.checkbox("Ejecutar en headless (recomendado en la nube)", value=True)
     submitted = st.form_submit_button("Consultar")
@@ -222,33 +245,22 @@ if submitted:
                     ruc=ruc, usr=usuario, psw=clave,
                     mes_valor=mes_valor, anio_texto=anio, headless=headless
                 )
+                # data ya está filtrado por Formulario == "0621"
                 if not data:
-                    st.info("No se encontraron resultados para el periodo seleccionado.")
+                    st.info("No se encontraron resultados del Formulario 0621 para el periodo seleccionado.")
                 else:
-                    st.success(f"Se encontraron {len(data)} registros.")
                     df = pd.DataFrame(data)
+                    st.success(f"Se encontraron {len(df)} registros del Formulario 0621.")
                     st.dataframe(df, use_container_width=True)
 
-                    cA, cB = st.columns(2)
-                    with cA:
-                        st.download_button(
-                            "⬇️ Descargar JSON",
-                            data=json.dumps(data, ensure_ascii=False, indent=2),
-                            file_name=f"sunat_{ruc}_{anio}{mes_valor}.json",
-                            mime="application/json"
-                        )
-                    with cB:
-                        st.download_button(
-                            "⬇️ Descargar CSV",
-                            data=df.to_csv(index=False),
-                            file_name=f"sunat_{ruc}_{anio}{mes_valor}.csv",
-                            mime="text/csv"
-                        )
-
-                    with st.expander("Ver JSON crudo"):
-                        st.code(json.dumps(data, ensure_ascii=False, indent=2), language="json")
+                    # ÚNICA descarga permitida: CSV
+                    st.download_button(
+                        "⬇️ Descargar CSV",
+                        data=df.to_csv(index=False),
+                        file_name=f"sunat_{ruc}_{anio}{mes_valor}_0621.csv",
+                        mime="text/csv"
+                    )
 
             except Exception as e:
                 st.error(str(e))
                 st.info("Revisa los archivos 'sunat_error.png' y 'sunat_error.html' generados en el directorio de la app para diagnóstico.")
-
