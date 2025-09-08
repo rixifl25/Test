@@ -1,11 +1,13 @@
 import os
 import time
 import json
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import pandas as pd
 import streamlit as st
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
+from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -34,8 +36,8 @@ XPATHS = {
 def build_driver(headless: bool = True):
     """
     Crea un driver de Chrome/Chromium que funciona:
-      - En Streamlit Cloud: usa /usr/bin/chromium y /usr/bin/chromedriver (instalados con packages.txt)
-      - En local: usa webdriver-manager para descargar un driver compatible
+      - En Streamlit Cloud: usa /usr/bin/chromium y /usr/bin/chromedriver (instalados con packages/apt)
+      - En local: usa webdriver-manager
     """
     chrome_options = Options()
     if headless:
@@ -53,7 +55,6 @@ def build_driver(headless: bool = True):
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
     )
 
-    # Intento 1: binarios del contenedor (Streamlit Cloud)
     chromium_bin = os.environ.get("GOOGLE_CHROME_BIN") or "/usr/bin/chromium"
     chromedriver_bin = os.environ.get("CHROMEDRIVER_PATH") or "/usr/bin/chromedriver"
 
@@ -61,7 +62,6 @@ def build_driver(headless: bool = True):
         chrome_options.binary_location = chromium_bin
         service = Service(chromedriver_bin)
     else:
-        # Intento 2: entorno local con webdriver-manager
         service = Service(ChromeDriverManager().install())
 
     driver = webdriver.Chrome(service=service, options=chrome_options)
@@ -92,8 +92,9 @@ def save_artifacts(driver, prefix="sunat_error"):
         pass
     return png, html
 
-def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: str, headless: bool = True):
-    driver = build_driver(headless=headless)
+def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: str):
+    # headless SIEMPRE activado
+    driver = build_driver(headless=True)
     wait = WebDriverWait(driver, 25)
 
     try:
@@ -113,9 +114,9 @@ def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: s
 
         # Cambiar al iframe
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "iframeApplication")))
-        time.sleep(2.5)
+        time.sleep(2.0)
 
-        # Selección de periodos
+        # Selección de periodos (inicio y fin = mismo mes)
         Select(wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_1")))).select_by_value(mes_valor)
         Select(wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioInicioAnio"]')))).select_by_visible_text(anio_texto)
 
@@ -129,7 +130,7 @@ def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: s
         rows = driver.find_elements(By.XPATH, '//table[contains(@class,"table")]/tbody/tr')
 
         def _nro_to_int(s: str) -> int:
-            s = s.strip()
+            s = (s or "").strip()
             digits = "".join(ch for ch in s if ch.isdigit())
             return int(digits) if digits else -1
 
@@ -187,6 +188,14 @@ with st.expander("⚠️ Aviso importante"):
 ruc_default = st.secrets.get("RUC_DEFAULT", "")
 usr_default = st.secrets.get("USR_DEFAULT", "")
 
+# Cálculo automático del PERIODO: mes anterior respecto a America/Lima
+now_pe = datetime.now(ZoneInfo("America/Lima"))
+first_of_month = now_pe.replace(day=1)
+prev_month_last_day = first_of_month - timedelta(days=1)
+anio_texto = str(prev_month_last_day.year)
+mes_valor = f"{prev_month_last_day.month:02d}"
+mes_nombre = prev_month_last_day.strftime("%B").capitalize()
+
 with st.form("form_login"):
     st.subheader("Credenciales")
     c1, c2 = st.columns(2)
@@ -197,35 +206,28 @@ with st.form("form_login"):
         clave = st.text_input("Clave SOL", value="", type="password")
 
     st.subheader("Periodo")
-    c3, c4 = st.columns(2)
-    with c3:
-        mes_map = {
-            "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
-            "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
-            "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
-        }
-        mes_label = st.selectbox("Mes (inicio/fin)", list(mes_map.keys()), index=2)
-        mes_valor = mes_map[mes_label]
-    with c4:
-        anio = st.text_input("Año (ej. 2025)", value="2025", max_chars=4)
+    st.info(f"Se usará automáticamente el **mes anterior**: {mes_nombre} {anio_texto} (código mes: {mes_valor}).")
 
-    headless = st.checkbox("Ejecutar en headless (recomendado en la nube)", value=True)
     submitted = st.form_submit_button("Consultar")
 
 if submitted:
-    if not (ruc and usuario and clave and anio.isdigit()):
-        st.warning("Completa todos los campos correctamente.")
+    if not (ruc and usuario and clave):
+        st.warning("Completa todos los campos de credenciales.")
     else:
         with st.spinner("Consultando en SUNAT..."):
             try:
                 data = run_sunat_scrape(
                     ruc=ruc, usr=usuario, psw=clave,
-                    mes_valor=mes_valor, anio_texto=anio, headless=headless
+                    mes_valor=mes_valor, anio_texto=anio_texto
                 )
+
+                # --- NUEVO: filtrar solo Formulario = "0621"
+                data = [row for row in data if row.get("Formulario", "").strip() == "0621"]
+
                 if not data:
-                    st.info("No se encontraron resultados para el periodo seleccionado.")
+                    st.info(f"No se encontraron resultados para {mes_nombre} {anio_texto} con Formulario = 0621.")
                 else:
-                    st.success(f"Se encontraron {len(data)} registros.")
+                    st.success(f"Se encontraron {len(data)} registros con Formulario = 0621.")
                     df = pd.DataFrame(data)
                     st.dataframe(df, use_container_width=True)
 
@@ -234,14 +236,14 @@ if submitted:
                         st.download_button(
                             "⬇️ Descargar JSON",
                             data=json.dumps(data, ensure_ascii=False, indent=2),
-                            file_name=f"sunat_{ruc}_{anio}{mes_valor}.json",
+                            file_name=f"sunat_{ruc}_{anio_texto}{mes_valor}_0621.json",
                             mime="application/json"
                         )
                     with cB:
                         st.download_button(
                             "⬇️ Descargar CSV",
                             data=df.to_csv(index=False),
-                            file_name=f"sunat_{ruc}_{anio}{mes_valor}.csv",
+                            file_name=f"sunat_{ruc}_{anio_texto}{mes_valor}_0621.csv",
                             mime="text/csv"
                         )
 
@@ -251,5 +253,3 @@ if submitted:
             except Exception as e:
                 st.error(str(e))
                 st.info("Revisa los archivos 'sunat_error.png' y 'sunat_error.html' generados en el directorio de la app para diagnóstico.")
-
-
