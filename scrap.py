@@ -22,9 +22,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 st.set_page_config(page_title="Matriz de Cumplimiento 0621", page_icon="🧾", layout="wide")
 
 URL_START = (
-    "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/"
-    "oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&"
-    "originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm"
+    "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm"
 )
 
 XPATHS = {
@@ -366,3 +364,4 @@ if submitted:
             except Exception as e:
                 st.error(str(e))
                 st.info("Se generaron 'sunat_error.png' y 'sunat_error.html' en el servidor para diagnóstico.")
+
