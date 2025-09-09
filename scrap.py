@@ -31,7 +31,7 @@ XPATHS = {
 }
 
 # -------------------------
-# Utilidades Selenium
+# Utilidades
 # -------------------------
 def build_driver(headless: bool = True):
     """
@@ -94,7 +94,29 @@ def save_artifacts(driver, prefix="sunat_error"):
         pass
     return png, html
 
+def vencimiento_por_ruc(ruc: str) -> str:
+    """Retorna la fecha de vencimiento (dd/mm/aa) según último dígito del RUC."""
+    if not ruc or not ruc[-1].isdigit():
+        return ""
+    d = int(ruc[-1])
+    if d == 0:
+        return "15/09/25"
+    if d == 1:
+        return "16/09/25"
+    if d in (2, 3):
+        return "17/09/25"
+    if d in (4, 5):
+        return "18/09/25"
+    if d in (6, 7):
+        return "19/09/25"
+    # d in (8, 9)
+    return "22/09/25"
+
 def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: str, headless: bool = True):
+    """
+    Hace login y navega a 'Mis declaraciones'. Devuelve una lista de filas,
+    filtrada al Formulario 0621 y deduplicada por (Periodo, Formulario) con el mayor NroOrden.
+    """
     driver = build_driver(headless=headless)
     wait = WebDriverWait(driver, 25)
 
@@ -245,21 +267,34 @@ if submitted:
                     ruc=ruc, usr=usuario, psw=clave,
                     mes_valor=mes_valor, anio_texto=anio, headless=headless
                 )
-                # data ya está filtrado por Formulario == "0621"
-                if not data:
-                    st.info("No se encontraron resultados del Formulario 0621 para el periodo seleccionado.")
-                else:
-                    df = pd.DataFrame(data)
-                    st.success(f"Se encontraron {len(df)} registros del Formulario 0621.")
-                    st.dataframe(df, use_container_width=True)
 
-                    # ÚNICA descarga permitida: CSV
-                    st.download_button(
-                        "⬇️ Descargar CSV",
-                        data=df.to_csv(index=False),
-                        file_name=f"sunat_{ruc}_{anio}{mes_valor}_0621.csv",
-                        mime="text/csv"
-                    )
+                # ----- NUEVO FORMATO DE SALIDA -----
+                # Si se encuentran resultados del 0621 -> "Declarado", si no -> "No declarado".
+                estado = "Declarado" if data else "No declarado"
+                periodo_tributario = f"{anio}{mes_valor}"
+                vencimiento = vencimiento_por_ruc(ruc)
+
+                df_out = pd.DataFrame([{
+                    "RUC": ruc,
+                    "Razón social": "MerkiCont",
+                    "Periodo tributario": periodo_tributario,
+                    "Vencimiento": vencimiento,
+                    "Perfil de cumplimiento": "",
+                    "Estado": estado
+                }])
+
+                st.success("Consulta realizada correctamente.")
+                st.subheader("Resultado")
+                # Tabla estática limpia en el orden solicitado
+                st.table(df_out)
+
+                # Descarga CSV con el mismo formato
+                st.download_button(
+                    "⬇️ Descargar CSV (formato solicitado)",
+                    data=df_out.to_csv(index=False),
+                    file_name=f"sunat_{ruc}_{periodo_tributario}_formato_solicitado.csv",
+                    mime="text/csv"
+                )
 
             except Exception as e:
                 st.error(str(e))
