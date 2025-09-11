@@ -1,13 +1,12 @@
 import os
 import time
-import json
 import pandas as pd
 import streamlit as st
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException, TimeoutException, WebDriverException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -16,29 +15,40 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # -------------------------
-# Constantes de la app
+# Constantes
 # -------------------------
-URL_START = "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm&state=rO0ABXQA701GcmNEbDZPZ28xODJOWWQ4aTNPT2krWUcrM0pTODAzTEJHTmtLRE1IT2pBQ2l2eW84em5lWjByM3RGY1BLT0tyQjEvdTBRaHNNUW8KWDJRQ0h3WmZJQWZyV0JBaGtTT0hWajVMZEg0Mm5ZdHlrQlFVaDFwMzF1eVl1V2tLS3ozUnVoZ1ovZisrQkZndGdSVzg1TXdRTmRhbAp1ek5OaXdFbG80TkNSK0E2NjZHeG0zNkNaM0NZL0RXa1FZOGNJOWZsYjB5ZXc3MVNaTUpxWURmNGF3dVlDK3pMUHdveHI2cnNIaWc1CkI3SkxDSnc9"
+URL_START_FLOW1 = (
+    "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm&state=rO0ABXQA701GcmNEbDZPZ28xODJOWWQ4aTNPT2krWUcrM0pTODAzTEJHTmtLRE1IT2pBQ2l2eW84em5lWjByM3RGY1BLT0tyQjEvdTBRaHNNUW8KWDJRQ0h3WmZJQWZyV0JBaGtTT0hWajVMZEg0Mm5ZdHlrQlFVaDFwMzF1eVl1V2tLS3ozUnVoZ1ovZisrQkZndGdSVzg1TXdRTmRhbHV6Tk5pd0VsbzROQ1IrQTY2Nkd4bTM2Q1ozQ1kvRFdrUVk4Y0k5ZmxiMHlleDcxU1pNSnFZRGY0YXd1WUMrekxQd295cjZyc0hpZzVCN0pMQ0p3PQ=="
+)
 
-XPATHS = {
+URL_START_FLOW2 = (
+    "https://api-seguridad.sunat.gob.pe/v1/clientessol/4f3b88b3-d9d6-402a-b85d-6a0bc857746a/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu/AutenticaMenuInternet.htm&state=rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAx3CAAAABAAAAADdAAEZXhlY3B0AAZwYXJhbXN0AEsqJiomL2NsLXRpLWl0bWVudS9NZW51SW50ZXJuZXQuaHRtJmI2NGQyNmE4YjVhZjA5MTkyM2IyM2I2NDA3YTFjMWRiNDFlNzMzYTZ0AANleGVweA=="
+)
+
+XPATHS_COMMON_LOGIN = {
     "ruc": '//*[@id="txtRuc"]',
     "usuario": '//*[@id="txtUsuario"]',
     "clave": '//*[@id="txtContrasena"]',
     "btn_ingresar": '//*[@id="btnAceptar"]',
+}
+
+XPATHS_FLOW1 = {
     "btn_declaraciones1": '//*[@id="nivel2_55_2"]',
     "btn_declaraciones2": '//*[@id="nivel3_55_2_1"]',
     "btn_declaraciones3": '//*[@id="nivel4_55_2_1_1_1"]',
+    "iframe_app": "iframeApplication",
+    "mes_ini": "periodo_tributario_1",
+    "anio_ini_xpath": '//select[@ng-model="consultaBean.rangoPeriodoTributarioInicioAnio"]',
+    "mes_fin": "periodo_tributario_2",
+    "anio_fin_xpath": '//select[@ng-model="consultaBean.rangoPeriodoTributarioFinAnio"]',
+    "btn_buscar_xpath": '//button[@ng-click="buscarConstancia()"]',
+    "tabla_rows_xpath": '//table[contains(@class,"table")]/tbody/tr',
 }
 
 # -------------------------
 # Utilidades
 # -------------------------
 def build_driver(headless: bool = True):
-    """
-    Crea un driver de Chrome/Chromium que funciona:
-      - En Streamlit Cloud: usa /usr/bin/chromium y /usr/bin/chromedriver (instalados con packages.txt)
-      - En local: usa webdriver-manager para descargar un driver compatible
-    """
     chrome_options = Options()
     if headless:
         chrome_options.add_argument("--headless=new")
@@ -55,7 +65,6 @@ def build_driver(headless: bool = True):
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
     )
 
-    # Intento 1: binarios del contenedor (Streamlit Cloud)
     chromium_bin = os.environ.get("GOOGLE_CHROME_BIN") or "/usr/bin/chromium"
     chromedriver_bin = os.environ.get("CHROMEDRIVER_PATH") or "/usr/bin/chromedriver"
 
@@ -63,23 +72,18 @@ def build_driver(headless: bool = True):
         chrome_options.binary_location = chromium_bin
         service = Service(chromedriver_bin)
     else:
-        # Intento 2: entorno local con webdriver-manager
         service = Service(ChromeDriverManager().install())
 
     driver = webdriver.Chrome(service=service, options=chrome_options)
-
-    # Ocultar webdriver (best-effort)
     try:
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": "Object.defineProperty(navigator, 'webdriver', { get: () => undefined })"
         })
     except Exception:
         pass
-
     return driver
 
 def save_artifacts(driver, prefix="sunat_error"):
-    """Guarda screenshot y HTML de la página actual para diagnóstico."""
     outdir = os.path.abspath(".")
     png = os.path.join(outdir, f"{prefix}.png")
     html = os.path.join(outdir, f"{prefix}.html")
@@ -95,69 +99,72 @@ def save_artifacts(driver, prefix="sunat_error"):
     return png, html
 
 def vencimiento_por_ruc(ruc: str) -> str:
-    """Retorna la fecha de vencimiento (dd/mm/aa) según último dígito del RUC."""
     if not ruc or not ruc[-1].isdigit():
         return ""
     d = int(ruc[-1])
-    if d == 0:
-        return "15/09/25"
-    if d == 1:
-        return "16/09/25"
-    if d in (2, 3):
-        return "17/09/25"
-    if d in (4, 5):
-        return "18/09/25"
-    if d in (6, 7):
-        return "19/09/25"
-    # d in (8, 9)
-    return "22/09/25"
+    if d == 0: return "15/09/25"
+    if d == 1: return "16/09/25"
+    if d in (2, 3): return "17/09/25"
+    if d in (4, 5): return "18/09/25"
+    if d in (6, 7): return "19/09/25"
+    return "22/09/25"  # 8 o 9
 
-def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: str, headless: bool = True):
-    """
-    Hace login y navega a 'Mis declaraciones'. Devuelve una lista de filas,
-    filtrada al Formulario 0621 y deduplicada por (Periodo, Formulario) con el mayor NroOrden.
-    """
+def _login(wait: WebDriverWait, ruc: str, usr: str, psw: str):
+    wait.until(EC.presence_of_element_located((By.XPATH, XPATHS_COMMON_LOGIN["ruc"]))).send_keys(ruc)
+    wait.until(EC.presence_of_element_located((By.XPATH, XPATHS_COMMON_LOGIN["usuario"]))).send_keys(usr)
+    wait.until(EC.presence_of_element_located((By.XPATH, XPATHS_COMMON_LOGIN["clave"]))).send_keys(psw)
+    wait.until(EC.element_to_be_clickable((By.XPATH, XPATHS_COMMON_LOGIN["btn_ingresar"]))).click()
+    time.sleep(1.5)
+
+def _safe_click(wait: WebDriverWait, driver: webdriver.Chrome, by, sel, pause=1.0):
+    try:
+        el = wait.until(EC.element_to_be_clickable((by, sel)))
+        try:
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", el)
+        except Exception:
+            pass
+        try:
+            el.click()
+        except Exception:
+            driver.execute_script("arguments[0].click();", el)
+        time.sleep(pause)
+        return True
+    except TimeoutException:
+        return False
+
+# -------------------------
+# Flujo 1: Declaraciones (0621)
+# -------------------------
+def run_sunat_scrape_flow1(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: str, headless: bool = True):
     driver = build_driver(headless=headless)
     wait = WebDriverWait(driver, 25)
-
     try:
-        driver.get(URL_START)
+        driver.get(URL_START_FLOW1)
+        _login(wait, ruc, usr, psw)
 
-        # Login
-        wait.until(EC.presence_of_element_located((By.XPATH, XPATHS["ruc"]))).send_keys(ruc)
-        driver.find_element(By.XPATH, XPATHS["usuario"]).send_keys(usr)
-        driver.find_element(By.XPATH, XPATHS["clave"]).send_keys(psw)
-        driver.find_element(By.XPATH, XPATHS["btn_ingresar"]).click()
-        time.sleep(1.5)
-
-        # Navegación “Mis declaraciones”
         for key in ("btn_declaraciones1", "btn_declaraciones2", "btn_declaraciones3"):
-            wait.until(EC.element_to_be_clickable((By.XPATH, XPATHS[key]))).click()
+            wait.until(EC.element_to_be_clickable((By.XPATH, XPATHS_FLOW1[key]))).click()
             time.sleep(1.0)
 
-        # Cambiar al iframe
-        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "iframeApplication")))
-        time.sleep(2.5)
+        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, XPATHS_FLOW1["iframe_app"])))
+        time.sleep(2.0)
 
-        # Selección de periodos
-        Select(wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_1")))).select_by_value(mes_valor)
-        Select(wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioInicioAnio"]')))).select_by_visible_text(anio_texto)
+        Select(wait.until(EC.presence_of_element_located((By.ID, XPATHS_FLOW1["mes_ini"])))).select_by_value(mes_valor)
+        Select(wait.until(EC.presence_of_element_located((By.XPATH, XPATHS_FLOW1["anio_ini_xpath"])))).select_by_visible_text(anio_texto)
 
-        Select(wait.until(EC.presence_of_element_located((By.ID, "periodo_tributario_2")))).select_by_value(mes_valor)
-        Select(wait.until(EC.presence_of_element_located((By.XPATH, '//select[@ng-model="consultaBean.rangoPeriodoTributarioFinAnio"]')))).select_by_visible_text(anio_texto)
+        Select(wait.until(EC.presence_of_element_located((By.ID, XPATHS_FLOW1["mes_fin"])))).select_by_value(mes_valor)
+        Select(wait.until(EC.presence_of_element_located((By.XPATH, XPATHS_FLOW1["anio_fin_xpath"])))).select_by_visible_text(anio_texto)
 
-        # Buscar
-        wait.until(EC.element_to_be_clickable((By.XPATH, '//button[@ng-click="buscarConstancia()"]'))).click()
+        wait.until(EC.element_to_be_clickable((By.XPATH, XPATHS_FLOW1["btn_buscar_xpath"]))).click()
         time.sleep(1.2)
 
-        rows = driver.find_elements(By.XPATH, '//table[contains(@class,"table")]/tbody/tr')
+        rows = driver.find_elements(By.XPATH, XPATHS_FLOW1["tabla_rows_xpath"])
 
         def _nro_to_int(s: str) -> int:
-            s = s.strip()
             digits = "".join(ch for ch in s if ch.isdigit())
             return int(digits) if digits else -1
 
-        best = {}  # (Periodo, Formulario) -> fila con mayor NroOrden
+        best = {}
         for row in rows:
             cols = row.find_elements(By.TAG_NAME, 'td')
             if not cols or len(cols) < 9:
@@ -167,41 +174,120 @@ def run_sunat_scrape(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: s
 
             try:
                 cols[8].find_element(By.TAG_NAME, 'a')
-                estado = "pagado"
+                estado_pago = "pagado"
             except NoSuchElementException:
-                estado = "sin pagar"
+                estado_pago = "sin pagar"
 
             fila = {
-                "ID": cols[0].text.strip(),
                 "Periodo": cols[1].text.strip(),
                 "Formulario": cols[2].text.strip(),
-                "Descripcion": cols[3].text.strip(),
                 "NroOrden": cols[4].text.strip(),
-                "FechaPresentacion": cols[5].text.strip(),
-                "Banco": cols[6].text.strip(),
-                "Importe": cols[7].text.strip(),
-                "Estado": estado
+                "EstadoPago": estado_pago
             }
-
             key = (fila["Periodo"], fila["Formulario"])
             if key not in best or _nro_to_int(fila["NroOrden"]) > _nro_to_int(best[key]["NroOrden"]):
                 best[key] = fila
 
-        # Filtrar solo Formulario 0621
         result = [fila for fila in best.values() if fila.get("Formulario") == "0621"]
-        return result
+        return {"hay_0621": bool(result)}
 
     except Exception as e:
-        png, html = save_artifacts(driver)
-        raise RuntimeError(f"{type(e).__name__}: {e}. Capturas guardadas: {os.path.basename(png)}, {os.path.basename(html)}") from e
+        png, html = save_artifacts(driver, prefix="sunat_flow1_error")
+        raise RuntimeError(f"[Flow1] {type(e).__name__}: {e}. Capturas: {os.path.basename(png)}, {os.path.basename(html)}") from e
     finally:
         driver.quit()
 
 # -------------------------
+# Flujo 2: Datos (Razón social y Perfil)
+# -------------------------
+def run_sunat_scrape_flow2_extract(ruc: str, usr: str, psw: str, headless: bool = True):
+    """
+    Secuencia:
+      - Login en URL_START_FLOW2
+      - Click: divOpcionServicio2 -> nivel1_84 -> nivel2_84_1 -> nivel3_84_1_1 -> nivel4_84_1_1_1_1
+      - Cambia iframe 'iframeApplication'
+      - Toma el PRIMER '.card-body'
+      - Dentro, recoge los 7 '.list-inline'. De cada uno toma el 2do '.list-inline-item'.
+      - Devuelve líneas 2 y 3 (índices 1 y 2): (razon_social, perfil_cumplimiento)
+    """
+    driver = build_driver(headless=headless)
+    wait = WebDriverWait(driver, 25)
+
+    try:
+        driver.get(URL_START_FLOW2)
+        _login(wait, ruc, usr, psw)
+
+        # Orden de clics (según tus instrucciones)
+        _safe_click(wait, driver, By.ID, "divOpcionServicio2")
+        _safe_click(wait, driver, By.ID, "nivel1_84")
+        _safe_click(wait, driver, By.ID, "nivel2_84_1")
+        _safe_click(wait, driver, By.ID, "nivel3_84_1_1")
+        _safe_click(wait, driver, By.ID, "nivel4_84_1_1_1_1")
+
+        # Cambiar a iframe
+        wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "iframeApplication")))
+        time.sleep(1.0)
+
+        # Tomar el primer .card-body
+        card_bodies = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".card-body")))
+        card = card_bodies[0] if card_bodies else None
+
+        razon_social, perfil_cumpl = None, None
+        if card:
+            # Buscar los 7 list-inline dentro del card
+            list_inlines = card.find_elements(By.CSS_SELECTOR, ".list-inline")
+            # Para cada list-inline, tomar el segundo .list-inline-item
+            valores = []
+            for ul in list_inlines:
+                items = ul.find_elements(By.CSS_SELECTOR, ".list-inline-item")
+                if len(items) >= 2:
+                    try:
+                        txt = items[1].text.strip()
+                        if not txt:
+                            txt = items[1].get_attribute("innerText").strip()
+                    except StaleElementReferenceException:
+                        txt = (items[1].get_attribute("innerText") or "").strip()
+                    valores.append(txt)
+                else:
+                    valores.append("")
+
+            # Líneas 2 y 3 (índices 1 y 2)
+            if len(valores) >= 3:
+                razon_social = valores[1] or None
+                perfil_cumpl = valores[2] or None
+
+        return {
+            "razon_social": razon_social,
+            "perfil_cumplimiento": perfil_cumpl
+        }
+
+    except Exception as e:
+        png, html = save_artifacts(driver, prefix="sunat_flow2_error")
+        raise RuntimeError(f"[Flow2] {type(e).__name__}: {e}. Capturas: {os.path.basename(png)}, {os.path.basename(html)}") from e
+    finally:
+        driver.quit()
+
+# -------------------------
+# Helpers salida
+# -------------------------
+def armar_salida_final(ruc: str, razon_social: str, perfil_cumpl: str, hay_0621: bool, mes_valor: str, anio_texto: str) -> pd.DataFrame:
+    estado = "Declarado" if hay_0621 else "No declarado"
+    periodo_tributario = f"{anio_texto}{mes_valor}"
+    vencimiento = vencimiento_por_ruc(ruc)
+    return pd.DataFrame([{
+        "RUC": ruc,
+        "Razón social": razon_social,
+        "Periodo tributario": periodo_tributario,
+        "Vencimiento": vencimiento,
+        "Perfil de cumplimiento": perfil_cumpl,
+        "Estado": estado
+    }])
+
+# -------------------------
 # STREAMLIT UI
 # -------------------------
-st.set_page_config(page_title="🧾 Declaraciones SUNAT", page_icon="🧾", layout="centered")
-st.title("🧾 Consulta de Declaraciones SUNAT")
+st.set_page_config(page_title="🧾 Declaraciones SUNAT (Integrado)", page_icon="🧾", layout="centered")
+st.title("🧾 Consulta integrada SUNAT (Flujo 1 + Flujo 2)")
 
 with st.expander("⚠️ Aviso importante"):
     st.write(
@@ -209,11 +295,11 @@ with st.expander("⚠️ Aviso importante"):
         "Las credenciales se usan solo durante la ejecución de tu consulta."
     )
 
-# Valores por defecto desde Secrets (opcional; no guardes claves)
+# Defaults (opcional)
 ruc_default = st.secrets.get("RUC_DEFAULT", "")
 usr_default = st.secrets.get("USR_DEFAULT", "")
 
-# --- Cálculo de mes/año por defecto = mes anterior (America/Lima) ---
+# Mes/año por defecto = mes anterior (America/Lima)
 now_lima = datetime.now(ZoneInfo("America/Lima"))
 if now_lima.month == 1:
     default_month_num = 12
@@ -222,16 +308,12 @@ else:
     default_month_num = now_lima.month - 1
     default_year_str = str(now_lima.year)
 
-# Mapas de meses
 mes_map = {
     "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
     "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
     "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
 }
-month_labels_in_order = [
-    "01 - Enero","02 - Febrero","03 - Marzo","04 - Abril","05 - Mayo","06 - Junio",
-    "07 - Julio","08 - Agosto","09 - Septiembre","10 - Octubre","11 - Noviembre","12 - Diciembre"
-]
+month_labels_in_order = list(mes_map.keys())
 default_label = f"{default_month_num:02d} - " + [
     "Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"
 ][default_month_num-1]
@@ -261,41 +343,47 @@ if submitted:
     if not (ruc and usuario and clave and anio.isdigit()):
         st.warning("Completa todos los campos correctamente.")
     else:
-        with st.spinner("Consultando en SUNAT..."):
+        # --------- FLUJO 1: 0621 ---------
+        with st.spinner("Consultando Declaraciones (Flujo 1)..."):
             try:
-                data = run_sunat_scrape(
+                r1 = run_sunat_scrape_flow1(
                     ruc=ruc, usr=usuario, psw=clave,
                     mes_valor=mes_valor, anio_texto=anio, headless=headless
                 )
-
-                # ----- NUEVO FORMATO DE SALIDA -----
-                # Si se encuentran resultados del 0621 -> "Declarado", si no -> "No declarado".
-                estado = "Declarado" if data else "No declarado"
-                periodo_tributario = f"{anio}{mes_valor}"
-                vencimiento = vencimiento_por_ruc(ruc)
-
-                df_out = pd.DataFrame([{
-                    "RUC": ruc,
-                    "Razón social": "MerkiCont",
-                    "Periodo tributario": periodo_tributario,
-                    "Vencimiento": vencimiento,
-                    "Perfil de cumplimiento": "",
-                    "Estado": estado
-                }])
-
-                st.success("Consulta realizada correctamente.")
-                st.subheader("Resultado")
-                # Tabla estática limpia en el orden solicitado
-                st.table(df_out)
-
-                # Descarga CSV con el mismo formato
-                st.download_button(
-                    "⬇️ Descargar CSV (formato solicitado)",
-                    data=df_out.to_csv(index=False),
-                    file_name=f"sunat_{ruc}_{periodo_tributario}_formato_solicitado.csv",
-                    mime="text/csv"
-                )
-
+                hay_0621 = r1.get("hay_0621", False)
+                st.success(f"Flujo 1 OK · 0621: {'Sí' if hay_0621 else 'No'}")
             except Exception as e:
                 st.error(str(e))
-                st.info("Revisa los archivos 'sunat_error.png' y 'sunat_error.html' generados en el directorio de la app para diagnóstico.")
+                st.stop()
+
+        # --------- FLUJO 2: Razón social y Perfil ---------
+        with st.spinner("Obteniendo Razón social y Perfil (Flujo 2)..."):
+            razon_social, perfil_cumpl = "MerkiCont", ""  # defaults por si algo falla
+            try:
+                r2 = run_sunat_scrape_flow2_extract(
+                    ruc=ruc, usr=usuario, psw=clave, headless=headless
+                )
+                razon_social = r2.get("razon_social") or razon_social
+                perfil_cumpl = r2.get("perfil_cumplimiento") or perfil_cumpl
+                st.success("Flujo 2 OK · Datos extraídos")
+            except Exception as e:
+                st.warning(f"No se pudo extraer datos de Flujo 2. Uso de valores por defecto. Detalle: {e}")
+
+        # --------- SALIDA INTEGRADA ---------
+        df_out = armar_salida_final(
+            ruc=ruc,
+            razon_social=razon_social,
+            perfil_cumpl=perfil_cumpl,
+            hay_0621=hay_0621,
+            mes_valor=mes_valor,
+            anio_texto=anio
+        )
+
+        st.subheader("Resultado (Integrado)")
+        st.table(df_out)
+        st.download_button(
+            "⬇️ Descargar CSV (resultado integrado)",
+            data=df_out.to_csv(index=False),
+            file_name=f"sunat_integrado_{ruc}_{anio}{mes_valor}.csv",
+            mime="text/csv"
+        )
