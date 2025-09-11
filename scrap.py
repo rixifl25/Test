@@ -19,17 +19,12 @@ from webdriver_manager.chrome import ChromeDriverManager
 # Constantes
 # -------------------------
 URL_START_FLOW1 = (
-    "https://api-seguridad.sunat.gob.pe/v1/clientessol/"
-    "59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol"
-    "?lang=es-PE&showDni=true&showLanguages=false"
-    "&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm"
+    "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm&state=rO0ABXQA701GcmNEbDZPZ28xODJOWWQ4aTNPT2krWUcrM0pTODAzTEJHTmtLRE1IT2pBQ2l2eW84em5lWjByM3RGY1BLT0tyQjEvdTBRaHNNUW8KWDJRQ0h3WmZJQWZyV0JBaGtTT0hWajVMZEg0Mm5ZdHlrQlFVaDFwMzF1eVl1V2tLS3ozUnVoZ1ovZisrQkZndGdSVzg1TXdRTmRhbAp1ek5OaXdFbG80TkNSK0E2NjZHeG0zNkNaM0NZL0RXa1FZOGNJOWZsYjB5ZXc3MVNaTUpxWURmNGF3dVlDK3pMUHdveHI2cnNIaWc1CkI3SkxDSnc9"
+
 )
 
 URL_START_FLOW2 = (
-    "https://api-seguridad.sunat.gob.pe/v1/clientessol/"
-    "4f3b88b3-d9d6-402a-b85d-6a0bc857746a/oauth2/loginMenuSol"
-    "?lang=es-PE&showDni=true&showLanguages=false"
-    "&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu/AutenticaMenuInternet.htm"
+    "https://api-seguridad.sunat.gob.pe/v1/clientessol/4f3b88b3-d9d6-402a-b85d-6a0bc857746a/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu/AutenticaMenuInternet.htm&state=rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAx3CAAAABAAAAADdAAEZXhlY3B0AAZwYXJhbXN0AEsqJiomL2NsLXRpLWl0bWVudS9NZW51SW50ZXJuZXQuaHRtJmI2NGQyNmE4YjVhZjA5MTkyM2IyM2I2NDA3YTFjMWRiNDFlNzMzYTZ0AANleGVweA=="
 )
 
 XPATHS_COMMON_LOGIN = {
@@ -263,8 +258,12 @@ st.title("🧾 Consulta integrada SUNAT (Flujo 1 + Flujo 2)")
 with st.expander("⚠️ Aviso importante"):
     st.write("Esta app automatiza el portal de SUNAT con Selenium. Úsala bajo tu responsabilidad.")
 
-ruc_default = st.secrets.get("RUC_DEFAULT", "")
-usr_default = st.secrets.get("USR_DEFAULT", "")
+try:
+    ruc_default = st.secrets.get("RUC_DEFAULT", "")
+    usr_default = st.secrets.get("USR_DEFAULT", "")
+except Exception:
+    ruc_default = ""
+    usr_default = ""
 
 now_lima = datetime.now(ZoneInfo("America/Lima"))
 if now_lima.month == 1:
