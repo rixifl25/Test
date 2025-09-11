@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import pathlib
 
 from selenium import webdriver
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
@@ -18,11 +19,17 @@ from webdriver_manager.chrome import ChromeDriverManager
 # Constantes
 # -------------------------
 URL_START_FLOW1 = (
-    "https://api-seguridad.sunat.gob.pe/v1/clientessol/59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm&state=rO0ABXQA701GcmNEbDZPZ28xODJOWWQ4aTNPT2krWUcrM0pTODAzTEJHTmtLRE1IT2pBQ2l2eW84em5lWjByM3RGY1BLT0tyQjEvdTBRaHNNUW8KWDJRQ0h3WmZJQWZyV0JBaGtTT0hWajVMZEg0Mm5ZdHlrQlFVaDFwMzF1eVl1V2tLS3ozUnVoZ1ovZisrQkZndGdSVzg1TXdRTmRhbHV6Tk5pd0VsbzROQ1IrQTY2Nkd4bTM2Q1ozQ1kvRFdrUVk4Y0k5ZmxiMHlleDcxU1pNSnFZRGY0YXd1WUMrekxQd295cjZyc0hpZzVCN0pMQ0p3PQ=="
+    "https://api-seguridad.sunat.gob.pe/v1/clientessol/"
+    "59d39217-c025-4de5-b342-393b0f4630ab/oauth2/loginMenuSol"
+    "?lang=es-PE&showDni=true&showLanguages=false"
+    "&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu2/AutenticaMenuInternetPlataforma.htm"
 )
 
 URL_START_FLOW2 = (
-    "https://api-seguridad.sunat.gob.pe/v1/clientessol/4f3b88b3-d9d6-402a-b85d-6a0bc857746a/oauth2/loginMenuSol?lang=es-PE&showDni=true&showLanguages=false&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu/AutenticaMenuInternet.htm&state=rO0ABXNyABFqYXZhLnV0aWwuSGFzaE1hcAUH2sHDFmDRAwACRgAKbG9hZEZhY3RvckkACXRocmVzaG9sZHhwP0AAAAAAAAx3CAAAABAAAAADdAAEZXhlY3B0AAZwYXJhbXN0AEsqJiomL2NsLXRpLWl0bWVudS9NZW51SW50ZXJuZXQuaHRtJmI2NGQyNmE4YjVhZjA5MTkyM2IyM2I2NDA3YTFjMWRiNDFlNzMzYTZ0AANleGVweA=="
+    "https://api-seguridad.sunat.gob.pe/v1/clientessol/"
+    "4f3b88b3-d9d6-402a-b85d-6a0bc857746a/oauth2/loginMenuSol"
+    "?lang=es-PE&showDni=true&showLanguages=false"
+    "&originalUrl=https://e-menu.sunat.gob.pe/cl-ti-itmenu/AutenticaMenuInternet.htm"
 )
 
 XPATHS_COMMON_LOGIN = {
@@ -107,7 +114,7 @@ def vencimiento_por_ruc(ruc: str) -> str:
     if d in (2, 3): return "17/09/25"
     if d in (4, 5): return "18/09/25"
     if d in (6, 7): return "19/09/25"
-    return "22/09/25"  # 8 o 9
+    return "22/09/25"
 
 def _login(wait: WebDriverWait, ruc: str, usr: str, psw: str):
     wait.until(EC.presence_of_element_located((By.XPATH, XPATHS_COMMON_LOGIN["ruc"]))).send_keys(ruc)
@@ -137,26 +144,26 @@ def _safe_click(wait: WebDriverWait, driver: webdriver.Chrome, by, sel, pause=1.
 # -------------------------
 def run_sunat_scrape_flow1(ruc: str, usr: str, psw: str, mes_valor: str, anio_texto: str, headless: bool = True):
     driver = build_driver(headless=headless)
-    wait = WebDriverWait(driver, 25)
+    wait = WebDriverWait(driver, 40)
     try:
         driver.get(URL_START_FLOW1)
         _login(wait, ruc, usr, psw)
 
-        for key in ("btn_declaraciones1", "btn_declaraciones2", "btn_declaraciones3"):
-            wait.until(EC.element_to_be_clickable((By.XPATH, XPATHS_FLOW1[key]))).click()
-            time.sleep(1.0)
+        _safe_click(wait, driver, By.XPATH, XPATHS_FLOW1["btn_declaraciones1"], pause=1.2)
+        _safe_click(wait, driver, By.XPATH, XPATHS_FLOW1["btn_declaraciones2"], pause=1.0)
+        _safe_click(wait, driver, By.XPATH, XPATHS_FLOW1["btn_declaraciones3"], pause=1.2)
 
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, XPATHS_FLOW1["iframe_app"])))
-        time.sleep(2.0)
+        time.sleep(1.0)
 
         Select(wait.until(EC.presence_of_element_located((By.ID, XPATHS_FLOW1["mes_ini"])))).select_by_value(mes_valor)
         Select(wait.until(EC.presence_of_element_located((By.XPATH, XPATHS_FLOW1["anio_ini_xpath"])))).select_by_visible_text(anio_texto)
-
         Select(wait.until(EC.presence_of_element_located((By.ID, XPATHS_FLOW1["mes_fin"])))).select_by_value(mes_valor)
         Select(wait.until(EC.presence_of_element_located((By.XPATH, XPATHS_FLOW1["anio_fin_xpath"])))).select_by_visible_text(anio_texto)
 
-        wait.until(EC.element_to_be_clickable((By.XPATH, XPATHS_FLOW1["btn_buscar_xpath"]))).click()
-        time.sleep(1.2)
+        btn_buscar = wait.until(EC.element_to_be_clickable((By.XPATH, XPATHS_FLOW1["btn_buscar_xpath"])))
+        btn_buscar.click()
+        time.sleep(1.5)
 
         rows = driver.find_elements(By.XPATH, XPATHS_FLOW1["tabla_rows_xpath"])
 
@@ -167,23 +174,13 @@ def run_sunat_scrape_flow1(ruc: str, usr: str, psw: str, mes_valor: str, anio_te
         best = {}
         for row in rows:
             cols = row.find_elements(By.TAG_NAME, 'td')
-            if not cols or len(cols) < 9:
-                continue
-            if not cols[0].text.strip().isdigit():
-                continue
-
+            if not cols or len(cols) < 9: continue
+            if not cols[0].text.strip().isdigit(): continue
             try:
                 cols[8].find_element(By.TAG_NAME, 'a')
-                estado_pago = "pagado"
             except NoSuchElementException:
-                estado_pago = "sin pagar"
-
-            fila = {
-                "Periodo": cols[1].text.strip(),
-                "Formulario": cols[2].text.strip(),
-                "NroOrden": cols[4].text.strip(),
-                "EstadoPago": estado_pago
-            }
+                pass
+            fila = {"Periodo": cols[1].text.strip(), "Formulario": cols[2].text.strip(), "NroOrden": cols[4].text.strip()}
             key = (fila["Periodo"], fila["Formulario"])
             if key not in best or _nro_to_int(fila["NroOrden"]) > _nro_to_int(best[key]["NroOrden"]):
                 best[key] = fila
@@ -193,7 +190,7 @@ def run_sunat_scrape_flow1(ruc: str, usr: str, psw: str, mes_valor: str, anio_te
 
     except Exception as e:
         png, html = save_artifacts(driver, prefix="sunat_flow1_error")
-        raise RuntimeError(f"[Flow1] {type(e).__name__}: {e}. Capturas: {os.path.basename(png)}, {os.path.basename(html)}") from e
+        raise RuntimeError(f"[Flow1] {type(e).__name__}: {e}. Capturas: {png}, {html}") from e
     finally:
         driver.quit()
 
@@ -201,69 +198,43 @@ def run_sunat_scrape_flow1(ruc: str, usr: str, psw: str, mes_valor: str, anio_te
 # Flujo 2: Datos (Razón social y Perfil)
 # -------------------------
 def run_sunat_scrape_flow2_extract(ruc: str, usr: str, psw: str, headless: bool = True):
-    """
-    Secuencia:
-      - Login en URL_START_FLOW2
-      - Click: divOpcionServicio2 -> nivel1_84 -> nivel2_84_1 -> nivel3_84_1_1 -> nivel4_84_1_1_1_1
-      - Cambia iframe 'iframeApplication'
-      - Toma el PRIMER '.card-body'
-      - Dentro, recoge los 7 '.list-inline'. De cada uno toma el 2do '.list-inline-item'.
-      - Devuelve líneas 2 y 3 (índices 1 y 2): (razon_social, perfil_cumplimiento)
-    """
     driver = build_driver(headless=headless)
-    wait = WebDriverWait(driver, 25)
-
+    wait = WebDriverWait(driver, 30)
     try:
         driver.get(URL_START_FLOW2)
         _login(wait, ruc, usr, psw)
 
-        # Orden de clics (según tus instrucciones)
         _safe_click(wait, driver, By.ID, "divOpcionServicio2")
         _safe_click(wait, driver, By.ID, "nivel1_84")
         _safe_click(wait, driver, By.ID, "nivel2_84_1")
         _safe_click(wait, driver, By.ID, "nivel3_84_1_1")
         _safe_click(wait, driver, By.ID, "nivel4_84_1_1_1_1")
 
-        # Cambiar a iframe
         wait.until(EC.frame_to_be_available_and_switch_to_it((By.ID, "iframeApplication")))
         time.sleep(1.0)
 
-        # Tomar el primer .card-body
         card_bodies = wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".card-body")))
         card = card_bodies[0] if card_bodies else None
 
         razon_social, perfil_cumpl = None, None
         if card:
-            # Buscar los 7 list-inline dentro del card
             list_inlines = card.find_elements(By.CSS_SELECTOR, ".list-inline")
-            # Para cada list-inline, tomar el segundo .list-inline-item
             valores = []
             for ul in list_inlines:
                 items = ul.find_elements(By.CSS_SELECTOR, ".list-inline-item")
                 if len(items) >= 2:
-                    try:
-                        txt = items[1].text.strip()
-                        if not txt:
-                            txt = items[1].get_attribute("innerText").strip()
-                    except StaleElementReferenceException:
-                        txt = (items[1].get_attribute("innerText") or "").strip()
+                    txt = items[1].text.strip() or items[1].get_attribute("innerText").strip()
                     valores.append(txt)
                 else:
                     valores.append("")
-
-            # Líneas 2 y 3 (índices 1 y 2)
             if len(valores) >= 3:
-                razon_social = valores[1] or None
-                perfil_cumpl = valores[2] or None
+                razon_social = valores[1]
+                perfil_cumpl = valores[2]
 
-        return {
-            "razon_social": razon_social,
-            "perfil_cumplimiento": perfil_cumpl
-        }
-
+        return {"razon_social": razon_social, "perfil_cumplimiento": perfil_cumpl}
     except Exception as e:
         png, html = save_artifacts(driver, prefix="sunat_flow2_error")
-        raise RuntimeError(f"[Flow2] {type(e).__name__}: {e}. Capturas: {os.path.basename(png)}, {os.path.basename(html)}") from e
+        raise RuntimeError(f"[Flow2] {type(e).__name__}: {e}. Capturas: {png}, {html}") from e
     finally:
         driver.quit()
 
@@ -276,10 +247,10 @@ def armar_salida_final(ruc: str, razon_social: str, perfil_cumpl: str, hay_0621:
     vencimiento = vencimiento_por_ruc(ruc)
     return pd.DataFrame([{
         "RUC": ruc,
-        "Razón social": razon_social,
+        "Razón social": razon_social or "MerkiCont",
         "Periodo tributario": periodo_tributario,
         "Vencimiento": vencimiento,
-        "Perfil de cumplimiento": perfil_cumpl,
+        "Perfil de cumplimiento": perfil_cumpl or "",
         "Estado": estado
     }])
 
@@ -290,16 +261,11 @@ st.set_page_config(page_title="🧾 Declaraciones SUNAT (Integrado)", page_icon=
 st.title("🧾 Consulta integrada SUNAT (Flujo 1 + Flujo 2)")
 
 with st.expander("⚠️ Aviso importante"):
-    st.write(
-        "Esta app automatiza el portal de SUNAT con Selenium. Úsala bajo tu responsabilidad y cumpliendo los Términos de Uso. "
-        "Las credenciales se usan solo durante la ejecución de tu consulta."
-    )
+    st.write("Esta app automatiza el portal de SUNAT con Selenium. Úsala bajo tu responsabilidad.")
 
-# Defaults (opcional)
 ruc_default = st.secrets.get("RUC_DEFAULT", "")
 usr_default = st.secrets.get("USR_DEFAULT", "")
 
-# Mes/año por defecto = mes anterior (America/Lima)
 now_lima = datetime.now(ZoneInfo("America/Lima"))
 if now_lima.month == 1:
     default_month_num = 12
@@ -308,11 +274,9 @@ else:
     default_month_num = now_lima.month - 1
     default_year_str = str(now_lima.year)
 
-mes_map = {
-    "01 - Enero": "01", "02 - Febrero": "02", "03 - Marzo": "03", "04 - Abril": "04",
-    "05 - Mayo": "05", "06 - Junio": "06", "07 - Julio": "07", "08 - Agosto": "08",
-    "09 - Septiembre": "09", "10 - Octubre": "10", "11 - Noviembre": "11", "12 - Diciembre": "12"
-}
+mes_map = {f"{i:02d} - {mes}": f"{i:02d}" for i, mes in enumerate(
+    ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"], start=1)}
+
 month_labels_in_order = list(mes_map.keys())
 default_label = f"{default_month_num:02d} - " + [
     "Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"
@@ -320,70 +284,57 @@ default_label = f"{default_month_num:02d} - " + [
 default_index = month_labels_in_order.index(default_label)
 
 with st.form("form_login"):
-    st.subheader("Credenciales")
     c1, c2 = st.columns(2)
     with c1:
         ruc = st.text_input("RUC", value=ruc_default, max_chars=11)
         usuario = st.text_input("Usuario SOL", value=usr_default)
     with c2:
         clave = st.text_input("Clave SOL", value="", type="password")
-
-    st.subheader("Periodo")
     c3, c4 = st.columns(2)
     with c3:
-        mes_label = st.selectbox("Mes (inicio/fin)", month_labels_in_order, index=default_index)
+        mes_label = st.selectbox("Mes", month_labels_in_order, index=default_index)
         mes_valor = mes_map[mes_label]
     with c4:
-        anio = st.text_input("Año (ej. 2025)", value=default_year_str, max_chars=4)
-
-    headless = st.checkbox("Ejecutar en headless (recomendado en la nube)", value=True)
+        anio = st.text_input("Año", value=default_year_str, max_chars=4)
+    headless = st.checkbox("Headless", value=True)
     submitted = st.form_submit_button("Consultar")
 
 if submitted:
     if not (ruc and usuario and clave and anio.isdigit()):
         st.warning("Completa todos los campos correctamente.")
     else:
-        # --------- FLUJO 1: 0621 ---------
-        with st.spinner("Consultando Declaraciones (Flujo 1)..."):
-            try:
-                r1 = run_sunat_scrape_flow1(
-                    ruc=ruc, usr=usuario, psw=clave,
-                    mes_valor=mes_valor, anio_texto=anio, headless=headless
-                )
+        try:
+            with st.spinner("Consultando Declaraciones (Flujo 1)..."):
+                r1 = run_sunat_scrape_flow1(ruc, usuario, clave, mes_valor, anio, headless=headless)
                 hay_0621 = r1.get("hay_0621", False)
-                st.success(f"Flujo 1 OK · 0621: {'Sí' if hay_0621 else 'No'}")
-            except Exception as e:
-                st.error(str(e))
-                st.stop()
-
-        # --------- FLUJO 2: Razón social y Perfil ---------
-        with st.spinner("Obteniendo Razón social y Perfil (Flujo 2)..."):
-            razon_social, perfil_cumpl = "MerkiCont", ""  # defaults por si algo falla
-            try:
-                r2 = run_sunat_scrape_flow2_extract(
-                    ruc=ruc, usr=usuario, psw=clave, headless=headless
-                )
-                razon_social = r2.get("razon_social") or razon_social
-                perfil_cumpl = r2.get("perfil_cumplimiento") or perfil_cumpl
-                st.success("Flujo 2 OK · Datos extraídos")
-            except Exception as e:
-                st.warning(f"No se pudo extraer datos de Flujo 2. Uso de valores por defecto. Detalle: {e}")
-
-        # --------- SALIDA INTEGRADA ---------
-        df_out = armar_salida_final(
-            ruc=ruc,
-            razon_social=razon_social,
-            perfil_cumpl=perfil_cumpl,
-            hay_0621=hay_0621,
-            mes_valor=mes_valor,
-            anio_texto=anio
-        )
-
-        st.subheader("Resultado (Integrado)")
-        st.table(df_out)
-        st.download_button(
-            "⬇️ Descargar CSV (resultado integrado)",
-            data=df_out.to_csv(index=False),
-            file_name=f"sunat_integrado_{ruc}_{anio}{mes_valor}.csv",
-            mime="text/csv"
-        )
+            with st.spinner("Obteniendo Razón social y Perfil (Flujo 2)..."):
+                r2 = run_sunat_scrape_flow2_extract(ruc, usuario, clave, headless=headless)
+                razon_social = r2.get("razon_social") or "MerkiCont"
+                perfil_cumpl = r2.get("perfil_cumplimiento") or ""
+            df_out = armar_salida_final(ruc, razon_social, perfil_cumpl, hay_0621, mes_valor, anio)
+            st.success("Consulta realizada correctamente")
+            st.table(df_out)
+            st.download_button("⬇️ Descargar CSV", df_out.to_csv(index=False), file_name=f"sunat_{ruc}_{anio}{mes_valor}.csv", mime="text/csv")
+        except Exception as e:
+            st.error(str(e))
+            # mostrar botones para descargar capturas si existen
+            for prefix in ["sunat_flow1_error", "sunat_flow2_error"]:
+                err_png = pathlib.Path(f"{prefix}.png")
+                err_html = pathlib.Path(f"{prefix}.html")
+                if err_png.exists():
+                    with open(err_png, "rb") as f:
+                        st.download_button(
+                            f"⬇️ Descargar captura ({err_png.name})",
+                            data=f,
+                            file_name=err_png.name,
+                            mime="image/png"
+                        )
+                if err_html.exists():
+                    with open(err_html, "r", encoding="utf-8") as f:
+                        html_data = f.read()
+                    st.download_button(
+                        f"⬇️ Descargar HTML ({err_html.name})",
+                        data=html_data,
+                        file_name=err_html.name,
+                        mime="text/html"
+                    )
